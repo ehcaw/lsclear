@@ -15,7 +15,8 @@ import {
   UserNav,
 } from "lucide-react";
 import { useTheme } from "next-themes";
-
+import { createAuthClient } from "better-auth/react";
+const { useSession } = createAuthClient();
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -37,21 +38,14 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  Sidebar,
-  SidebarProvider,
-  SidebarHeader,
-  SidebarTrigger,
-  SidebarTreeView,
-  SidebarFooter,
-  TreeDataItem,
-} from "@/components/editor/sidebar";
+import { Sidebar } from "@/components/sidebar/sidebar";
 import { Separator } from "@/components/ui/separator";
-import TerminalComponent from "@/components/terminal/terminal";
+// import TerminalComponent from "@/components/terminal/terminal";
+import TerminalIframeComponent from "@/components/terminal/terminal-iframe";
 import { cn } from "@/lib/utils";
 import useFileStore from "@/lib/files-store";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/utils/supabase/client";
+import { getCurrentUser } from "@/utils/auth";
 
 // File type for our sandbox
 interface File {
@@ -66,7 +60,6 @@ interface File {
 export default function Home() {
   const { theme } = useTheme();
   const router = useRouter();
-  const supabase = createClient();
 
   const {
     userId,
@@ -92,22 +85,32 @@ export default function Home() {
   );
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
+  const {
+    data: session,
+    isPending, //loading state
+    error: err, //error object
+    refetch, //refetch the session
+  } = useSession();
+
   // Load files on component mount
   useEffect(() => {
     loadFiles();
   }, [loadFiles]);
+
   useEffect(() => {
     async function getUser() {
-      const { data, error } = await supabase.auth.getUser();
-      if (error || !data.user) {
-        console.error(error);
+      const user = await getCurrentUser();
+
+      if (!user) {
         router.push("/login");
-      } else {
-        setUserId(data.user?.id);
+        return;
       }
+
+      console.log(user.id);
+      setUserId(user.id || "");
     }
     getUser();
-  }, []);
+  }, [router]);
 
   // Get current active file
   const currentFile = activeFile();
@@ -135,6 +138,8 @@ export default function Home() {
   const handleFileSelect = (item: TreeDataItem | undefined) => {
     if (item && !item.children) {
       console.log("File selected:", item.name);
+      // setCurrentFile(item);
+      setActiveFileId(item.id);
       // Add logic to open the file
     }
   };
@@ -396,7 +401,7 @@ export default function Home() {
           </ScrollArea>
         </Card> */}
         <div className="flex h-screen">
-          <Sidebar data={fileTreeData} onSelectChange={handleFileSelect} />
+          <Sidebar userId={userId} onSelectChange={handleFileSelect} />
         </div>
 
         {/* Main Content */}
@@ -442,7 +447,7 @@ export default function Home() {
                   id="terminal-container"
                   className="rounded-none border-t border-l-0 border-r-0 border-b-0 h-80"
                 >
-                  <TerminalComponent userId={userId | ""} />
+                  <TerminalIframeComponent userId={userId} />
                 </Card>
               </TabsContent>
               <TabsContent value="output">

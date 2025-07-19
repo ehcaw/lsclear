@@ -1,6 +1,6 @@
 "use client";
 
-import { createClient } from "@/utils/supabase/client";
+import { createAuthClient } from "better-auth/client";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -12,14 +12,11 @@ import {
 import { Chrome } from "lucide-react";
 
 export default function LoginPage() {
-  const supabase = createClient();
-
+  const authClient = createAuthClient();
   const handleSignInWithGoogle = async () => {
-    await supabase.auth.signInWithOAuth({
+    const data = await authClient.signIn.social({
       provider: "google",
-      options: {
-        redirectTo: `${location.origin}/auth/callback`,
-      },
+      callbackURL: "/",
     });
   };
 

@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import { createClient } from "@/utils/supabase/client";
 
 interface File {
   id: string;
@@ -32,6 +31,7 @@ interface FileStore {
 }
 
 const useFileStore = create<FileStore>((set, get) => ({
+  userId: "",
   files: [],
   activeFileId: null,
   isLoading: false,
@@ -68,49 +68,37 @@ print(greet("Developer"))
   },
 
   loadFiles: async () => {
-    console.log("Loading files from Supabase...");
-    const supabase = createClient();
+    console.log("Loading files from API...");
+    const { userId } = get();
 
     try {
       set({ isLoading: true, error: null });
 
-      const {
-        data: { user },
-        error: authError,
-      } = await supabase.auth.getUser();
-
-      if (authError) {
-        console.error("Auth error:", authError);
+      if (!userId) {
+        console.log("No user ID found, using default files");
         get().initWithDefaults();
         return;
       }
 
-      if (!user) {
-        console.log("No user found, using default files");
-        get().initWithDefaults();
-        return;
+      console.log("Loading files for user:", userId);
+
+      // Use fetch to call a server API endpoint
+      const response = await fetch(`/api/files?userId=${userId}`);
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      console.log("User found:", user.email);
-
-      const { data: files, error } = await supabase
-        .from("files")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (error) {
-        console.error("Database error:", error);
-        get().initWithDefaults();
-        return;
-      }
-
-      console.log("Files loaded:", files);
+      const data = await response.json();
+      const files = data.files;
 
       if (!files || files.length === 0) {
         console.log("No files found in database, using defaults");
         get().initWithDefaults();
         return;
       }
+
+      console.log("Files loaded:", files);
 
       set({
         files: files || [],
@@ -124,17 +112,12 @@ print(greet("Developer"))
   },
 
   addFile: async (fileData) => {
-    const supabase = createClient();
+    const { userId } = get();
 
     try {
       set({ isLoading: true, error: null });
 
-      const {
-        data: { user },
-        error: authError,
-      } = await supabase.auth.getUser();
-
-      if (authError || !user) {
+      if (!userId) {
         const newFile = {
           id: Date.now().toString(),
           ...fileData,
@@ -149,27 +132,24 @@ print(greet("Developer"))
         return;
       }
 
-      const { data: newFile, error } = await supabase
-        .from("files")
-        .insert([fileData])
-        .select()
-        .single();
-
-      if (error) {
-        console.error("Error adding file to database:", error);
-        const fallbackFile = {
-          id: Date.now().toString(),
+      // Use fetch to call a server API endpoint
+      const response = await fetch("/api/files", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
           ...fileData,
-          created_at: new Date().toISOString(),
-        };
+          userId,
+        }),
+      });
 
-        set((state) => ({
-          files: [fallbackFile, ...state.files],
-          activeFileId: fallbackFile.id,
-          isLoading: false,
-        }));
-        return;
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
+
+      const data = await response.json();
+      const newFile = data.file;
 
       set((state) => ({
         files: [newFile, ...state.files],
@@ -193,7 +173,7 @@ print(greet("Developer"))
   },
 
   updateFileContent: async (id, content) => {
-    const supabase = createClient();
+    const { userId } = get();
 
     set((state) => ({
       files: state.files.map((file) =>
@@ -202,41 +182,33 @@ print(greet("Developer"))
     }));
 
     try {
-      const {
-        data: { user },
-        error: authError,
-      } = await supabase.auth.getUser();
-
-      if (authError || !user) {
+      if (!userId) {
         return;
       }
 
-      const { error } = await supabase
-        .schema("afterquery ")
-        .from("files")
-        .update({ content, updated_at: new Date().toISOString() })
-        .eq("id", id);
-
-      if (error) {
-        console.error("Error updating file in database:", error);
-      }
+      // Use fetch to call a server API endpoint
+      await fetch(`/api/files/${id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          content,
+          userId,
+        }),
+      });
     } catch (error) {
       console.error("Error updating file:", error);
     }
   },
 
   deleteFile: async (id) => {
-    const supabase = createClient();
+    const { userId } = get();
 
     try {
       set({ isLoading: true, error: null });
 
-      const {
-        data: { user },
-        error: authError,
-      } = await supabase.auth.getUser();
-
-      if (authError || !user) {
+      if (!userId) {
         set((state) => {
           const updatedFiles = state.files.filter((file) => file.id !== id);
           return {
@@ -253,11 +225,10 @@ print(greet("Developer"))
         return;
       }
 
-      const { error } = await supabase.from("files").delete().eq("id", id);
-
-      if (error) {
-        console.error("Error deleting file from database:", error);
-      }
+      // Use fetch to call a server API endpoint
+      await fetch(`/api/files/${id}?userId=${userId}`, {
+        method: "DELETE",
+      });
 
       set((state) => {
         const updatedFiles = state.files.filter((file) => file.id !== id);
