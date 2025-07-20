@@ -37,7 +37,6 @@ export function Sidebar({userId, onSelectChange}: SidebarProps) {
     }
   );
 
-  console.log(projectData)
 
   if (error) return <div>Error loading project structure: {error.message}</div>;
   if (!projectData) return <div>No project data available</div>;

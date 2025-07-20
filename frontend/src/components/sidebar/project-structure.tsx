@@ -29,7 +29,6 @@ interface ProjectStructureProps {
 }
 
 export function ProjectStructure({ data }: ProjectStructureProps) {
-  console.log(data)
   const [expandedFolders, setExpandedFolders] = useState<
     Record<string, boolean>
   >({});
@@ -84,14 +83,14 @@ export function ProjectStructure({ data }: ProjectStructureProps) {
   };
 
   return (
-  <SidebarProvider>
-    <Sidebar>
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarMenu>{data.data[0].structure.map(renderNode)}</SidebarMenu>
-        </SidebarGroup>
-      </SidebarContent>
-    </Sidebar>
+    <SidebarProvider>
+      <Sidebar>
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarMenu>{data.data[0].structure.map(renderNode)}</SidebarMenu>
+          </SidebarGroup>
+        </SidebarContent>
+      </Sidebar>
     </SidebarProvider>
   );
 }

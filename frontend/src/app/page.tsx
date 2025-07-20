@@ -1,6 +1,12 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
-import MonacoEditor from "@/components/editor/editor";
+import dynamic from 'next/dynamic';
+
+// Import the dynamic editor component
+const MonacoEditor = dynamic(
+  () => import('@/components/editor/dynamic-editor'),
+  { ssr: false }
+);
 import {
   Play,
   Plus,
@@ -40,12 +46,11 @@ import {
 } from "@/components/ui/tooltip";
 import { Sidebar } from "@/components/sidebar/sidebar";
 import { Separator } from "@/components/ui/separator";
-// import TerminalComponent from "@/components/terminal/terminal";
-import TerminalIframeComponent from "@/components/terminal/terminal-iframe";
-import { cn } from "@/lib/utils";
+import TerminalComponent from "@/components/terminal/terminal";
 import useFileStore from "@/lib/files-store";
 import { useRouter } from "next/navigation";
 import { getCurrentUser } from "@/utils/auth";
+import { TreeDataItem } from "@/components/sidebar/tree-view";
 
 // File type for our sandbox
 interface File {
@@ -329,77 +334,6 @@ export default function Home() {
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar */}
-        {/* <Card className="w-64 rounded-none border-r border-t-0 border-b-0 border-l-0">
-          <CardHeader className="px-4 py-3 space-y-0 flex flex-row items-center justify-between">
-            <CardTitle className="text-sm font-medium">Files</CardTitle>
-            <Dialog
-              open={newFileDialogOpen}
-              onOpenChange={setNewFileDialogOpen}
-            >
-              <DialogTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-8 w-8">
-                  <Plus className="h-4 w-4" />
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Create New File</DialogTitle>
-                  <DialogDescription>
-                    Enter a name for your new file with extension (e.g.
-                    script.py)
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="py-4">
-                  <Label htmlFor="filename">File name</Label>
-                  <Input
-                    id="filename"
-                    value={newFileName}
-                    onChange={(e) => setNewFileName(e.target.value)}
-                    placeholder="example.py"
-                    onKeyPress={(e) => {
-                      if (e.key === "Enter") {
-                        handleAddFile();
-                      }
-                    }}
-                  />
-                </div>
-                <DialogFooter>
-                  <Button onClick={handleAddFile} type="submit">
-                    Create
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-          </CardHeader>
-          <Separator />
-          <ScrollArea className="h-[calc(100vh-8rem)]">
-            <div className="px-2 py-2">
-              {files.map((file) => (
-                <div key={file.id} className="flex items-center group mb-1">
-                  <Button
-                    variant={activeFileId === file.id ? "secondary" : "ghost"}
-                    className={cn(
-                      "flex-1 justify-start text-left font-normal",
-                      activeFileId === file.id && "font-medium",
-                    )}
-                    onClick={() => setActiveFileId(file.id)}
-                  >
-                    {file.name}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
-                    onClick={() => handleDeleteFile(file.id)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          </ScrollArea>
-        </Card> */}
         <div className="flex h-screen">
           <Sidebar userId={userId} onSelectChange={handleFileSelect} />
         </div>
@@ -436,18 +370,12 @@ export default function Home() {
           {/* Console Output */}
           <Card className="rounded-none border-t border-l-0 border-r-0 border-b-0">
             <Tabs defaultValue="terminal">
-              <CardHeader className="px-4 py-2 flex flex-row items-center">
-                <TabsList>
-                  <TabsTrigger value="terminal">Terminal</TabsTrigger>
-                  <TabsTrigger value="output">Output</TabsTrigger>
-                </TabsList>
-              </CardHeader>
               <TabsContent value="terminal">
                 <Card
                   id="terminal-container"
                   className="rounded-none border-t border-l-0 border-r-0 border-b-0 h-80"
                 >
-                  <TerminalIframeComponent userId={userId} />
+                  <TerminalComponent userId={userId} apiBaseUrl={process.env.NEXT_PUBLIC_REACT_APP_API_URL} />
                 </Card>
               </TabsContent>
               <TabsContent value="output">

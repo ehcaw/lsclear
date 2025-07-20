@@ -1,130 +1,465 @@
+from fastapi import FastAPI, HTTPException, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
+from datetime import datetime, timedelta
+import docker
+import uuid, asyncio, json, traceback
+import tarfile
+import io
 import os
-import pty
-import asyncio
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-import uvicorn
-from supabase import create_client, Client
-import tempfile
-from dotenv import load_dotenv
-import shutil
-
-load_dotenv()
 
 app = FastAPI()
-url: str = os.environ["SUPABASE_URL"]
-key: str = os.environ["SUPABASE_ANON_KEY"]
-supabase: Client = create_client(url, key)
+client = docker.from_env()
 
-async def fetch_files_from_db(user_id: str):
-    # response = (
-    #     supabase.table("afterquery.files")
-    #     .select("*")
-    #     .execute()
-    # )
-    # print(response)
-    # return response
-    """
-    Fetches file data from the database for a given session/user.
-    Replace this with your actual database logic.
-    """
-    print(f"Fetching files for user: {user_id}")
-    # Example: Query your database using the session_id (or a user_id associated with it)
-    # import your_db_connector
-    # files = await your_db_connector.get_files(user_id=...)
-    return [
-        {
-            "name": "main.py",
-            "content": "# Welcome to your personal sandbox!\nprint('Hello from main.py!')\n"
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# In-memory storage for session -> container mapping
+# In production, you'd use a proper database
+session_containers = {}
+user_containers = {}  # Maps user_id to container_id
+
+def cleanup_old_containers():
+    """Clean up old containers that are no longer in use"""
+    try:
+        # Get all our managed containers
+        containers = client.containers.list(
+            all=True,
+            filters={"label": ["managed_by=terminal"]}
+        )
+
+        # Find containers not associated with any active user
+        active_container_ids = set(user_containers.values())
+        for container in containers:
+            if container.id not in active_container_ids:
+                try:
+                    print(f"Cleaning up unused container {container.id}")
+                    container.remove(force=True)
+                except Exception as e:
+                    print(f"Error cleaning up container {container.id}: {e}")
+    except Exception as e:
+        print(f"Error in cleanup_old_containers: {e}")
+
+def make_tar_archive(name, file_path):
+    """Create a tar archive for a single file"""
+    tar_buffer = io.BytesIO()
+    with tarfile.open(fileobj=tar_buffer, mode='w') as tar:
+        tar.add(file_path, arcname=name)
+    tar_buffer.seek(0)
+    return tar_buffer.getvalue()
+
+def get_or_create_container(user_id: str):
+    """Get existing container for user or create a new one"""
+    # Try to find existing container for this user
+    try:
+        containers = client.containers.list(
+            all=True,
+            filters={"label": [f"user_id={user_id}", "managed_by=terminal"]}
+        )
+
+        # If container exists and is running, return it
+        if containers:
+            container = containers[0]
+            if container.status != 'running':
+                container.start()
+            print(f"Reusing existing container {container.id} for user {user_id}")
+            return container
+    except Exception as e:
+        print(f"Error finding existing container: {e}")
+
+    # Create new container if none exists
+    print(f"Creating new container for user {user_id}")
+    container = client.containers.run(
+        "ehcaw/lsclear-sandbox:latest",
+        command=["/bin/sleep", "infinity"],  # Keep container running
+        tty=True,
+        detach=True,
+        working_dir="/root",
+        network_disabled=True,
+        mem_limit="1g",  # Increased memory limit
+        cpu_quota=50000,
+        labels={"user_id": user_id, "managed_by": "terminal"},
+        name=f"terminal-{user_id}",
+        remove=False,
+        auto_remove=False,
+        environment={
+            "TERM": "xterm-256color",
+            "HOME": "/root",
+            "SHELL": "/bin/bash",
+            "USER": "root"
         },
-        {
-            "name": "data.txt",
-            "content": "This is some data from your database."
+        volumes={
+            '/var/run/docker.sock': {
+                'bind': '/var/run/docker.sock',
+                'mode': 'ro'
+            }
         },
-        {
-            "name": "README.md",
-            "content": "## Project Files\n\n- `main.py`: The main script.\n- `data.txt`: A data file."
-        }
-    ]
-async def fetch_file_structure_from_db(user_id: str):
-    response = (
-        supabase.table("afterquery.file_structures")
-        .select("*")
-        .execute()
+        privileged=True  # Required for some operations
     )
-    print(response)
-    return response
+    
+    # Install basic tools
+    exit_code, output = container.exec_run(
+        "apt-get update && apt-get install -y bash-completion vim nano curl wget git",
+        tty=True
+    )
+    
+    # Create a simple bashrc with basic settings
+    try:
+        # Set a simple prompt
+        container.exec_run("echo \"export PS1='[\\u@\\h \\W]\\\\$ '\" > /root/.bashrc", tty=True)
+        # Add some useful aliases
+        container.exec_run("echo \"alias ll='ls -la'\" >> /root/.bashrc", tty=True)
+        # Set proper permissions
+        container.exec_run("chmod 644 /root/.bashrc", tty=True)
+    except Exception as e:
+        print(f"Warning: Failed to set up bashrc: {e}")
+    
+    print(f"Created new container {container.id} for user {user_id}")
+    return container
 
-@app.websocket("/ws/{user_id}")
-async def ws_pty(ws: WebSocket, user_id: str):
-    await ws.accept()
+@app.post("/terminal/start")
+async def create_session(user_data: dict):
+    """Start or resume a terminal session"""
+    user_id = user_data.get('user_id')
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id is required")
 
-    # The 'with' block now wraps the entire user session.
-    # The directory will exist until the user disconnects.
-    with tempfile.TemporaryDirectory() as temp_dir:
-        try:
-            # 1. Fetch and write files to the temporary directory
-            files_data = await fetch_files_from_db(user_id)
-            for file_info in files_data:
-                file_path = os.path.join(temp_dir, file_info["name"])
-                with open(file_path, "w") as f:
-                    f.write(file_info["content"])
+    try:
+        # Clean up any old containers first
+        cleanup_old_containers()
 
-            print(f"Populated {temp_dir} for session {user_id}")
+        # Get or create container for this user
+        container = get_or_create_container(user_id)
 
-            # 2. Fork a process to run the shell *inside the directory*
-            master_fd, slave_fd = pty.openpty()
-            pid = os.fork()
+        # Track this user's container
+        user_containers[user_id] = container.id
 
-            if pid == 0:
-                # --- CHILD PROCESS (The Shell) ---
-                os.setsid()
-                os.close(master_fd)
+        # Generate a new session ID
+        sid = str(uuid.uuid4())
 
-                # CRITICAL STEP: Change the current directory to the temp one
-                os.chdir(temp_dir)
+        # Store session info
+        session_containers[sid] = {
+            "container_id": container.id,
+            "user_id": user_id,
+            "created_at": datetime.utcnow().isoformat()
+        }
 
-                # Set up the PTY as standard I/O
-                os.dup2(slave_fd, 0)
-                os.dup2(slave_fd, 1)
-                os.dup2(slave_fd, 2)
-                if slave_fd > 2:
-                    os.close(slave_fd)
+        return {
+            "session_id": sid,
+            "container_id": container.id,
+            "is_new_container": container.attrs["State"]["Running"]
+        }
+    except Exception as e:
+        print(f"Error creating session: {e}")
+        # Clean up any partially created resources
+        if 'container' in locals():
+            try:
+                container.remove(force=True)
+            except:
+                pass
+        raise HTTPException(status_code=500, detail=str(e))
 
-                # Start the shell. It will now be running inside temp_dir.
-                shell = os.environ.get("SHELL", "/bin/bash")
-                os.execv(shell, [shell])
+@app.get("/api/files/{sid}/{name}")
+async def get_file(sid: str, name: str):
+    # lookup container by sid
+    if sid not in session_containers:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    container_id = session_containers[sid]
+    try:
+        container = client.containers.get(container_id)
+        # Get file from container
+        bits, stat = container.get_archive(f"/workspace/{name}")
+        # Extract file content from tar archive
+        tar_buffer = io.BytesIO()
+        for chunk in bits:
+            tar_buffer.write(chunk)
+        tar_buffer.seek(0)
+
+        with tarfile.open(fileobj=tar_buffer, mode='r') as tar:
+            file_obj = tar.extractfile(name)
+            if file_obj:
+                content = file_obj.read().decode('utf-8')
+                return {"content": content}
             else:
-                # --- PARENT PROCESS (Your FastAPI App) ---
-                os.close(slave_fd)
-                loop = asyncio.get_event_loop()
+                raise HTTPException(status_code=404, detail="File not found")
+    except docker.errors.NotFound:
+        raise HTTPException(status_code=404, detail="Container not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-                # Function to read from the shell and send to the client
-                def read_pty():
-                    try:
-                        data = os.read(master_fd, 1024)
-                        asyncio.create_task(ws.send_text(data.decode(errors="ignore")))
-                    except OSError:
-                        pass
+@app.put("/api/files/{sid}/{name}")
+async def save_file(sid: str, name: str, content: str):
+    # lookup container by sid
+    if sid not in session_containers:
+        raise HTTPException(status_code=404, detail="Session not found")
 
-                loop.add_reader(master_fd, read_pty)
+    container_id = session_containers[sid]
+    try:
+        container = client.containers.get(container_id)
 
-                # Loop to read from the client and send to the shell
+        # Write content to temporary file
+        temp_file = f"/tmp/{name}"
+        with open(temp_file, "w") as f:
+            f.write(content)
+
+        # Create tar archive and put it in container
+        tar_data = make_tar_archive(name, temp_file)
+        container.put_archive("/workspace", tar_data)
+
+        # Clean up temp file
+        os.remove(temp_file)
+
+        return {"ok": True}
+    except docker.errors.NotFound:
+        raise HTTPException(status_code=404, detail="Container not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/terminal/{sid}")
+async def terminal_status(sid: str):
+    """
+    Poll endpoint: returns {status: "RUNNING" | "FAILED" | "PENDING"}
+    """
+    if sid not in session_containers:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    container_id = session_containers[sid]
+    try:
+        container = client.containers.get(container_id)
+        if container.status == "running":
+            return {"status": "RUNNING"}
+        elif container.status == "exited":
+            return {"status": "FAILED"}
+        else:
+            return {"status": "PENDING"}
+    except docker.errors.NotFound:
+        return {"status": "FAILED"}
+
+@app.delete("/terminal/{sid}")
+async def terminal_stop(sid: str):
+    """
+    Gracefully stops and removes the container
+    """
+    if sid not in session_containers:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    container_id = session_containers[sid]
+    try:
+        container = client.containers.get(container_id)
+        container.stop()
+        container.remove()
+        del session_containers[sid]
+        return {"ok": True}
+    except docker.errors.NotFound:
+        # Container already gone
+        del session_containers[sid]
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/terminal/cleanup/{user_id}")
+async def cleanup_user_container(user_id: str):
+    """Clean up a user's container when they're done"""
+    try:
+        print(f"Cleanup request for user: {user_id}")
+        if not user_id or user_id == 'undefined' or user_id == 'null':
+            print("No valid user ID provided for cleanup")
+            return {"status": "skipped", "message": "No user ID provided"}
+
+        if user_id in user_containers:
+            container_id = user_containers[user_id]
+            try:
+                container = client.containers.get(container_id)
+                print(f"Cleaning up container {container_id} for user {user_id}")
+                container.remove(force=True)
+                # Clean up any sessions for this user
+                global session_containers
+                session_containers = {k: v for k, v in session_containers.items()
+                                   if v.get('user_id') != user_id}
+                del user_containers[user_id]
+                return {"status": "success", "message": f"Container {container_id} removed"}
+            except docker.errors.NotFound:
+                # Container already removed
+                if user_id in user_containers:
+                    del user_containers[user_id]
+                return {"status": "success", "message": "Container not found"}
+        return {"status": "not_found", "message": "No container found for user"}
+    except Exception as e:
+        print(f"Error cleaning up container for user {user_id}: {e}")
+        if not isinstance(e, HTTPException):
+            raise HTTPException(status_code=500, detail=str(e))
+        raise
+
+@app.websocket("/terminal/ws/{sid}")
+async def terminal_ws(ws: WebSocket, sid: str):
+    """
+    WebSocket proxy to the running container's bash
+    """
+
+    if not sid:
+        print("Error: session_id query parameter is required")
+        await ws.close(code=1008, reason="session_id query parameter is required")
+        return
+
+    print(f"\n=== New WebSocket Connection ===")
+    print(f"Session ID: {sid}")
+    print(f"Client headers: {dict(ws.headers)}")
+    print(f"Query params: {dict(ws.query_params)}")
+    print(f"Available sessions: {list(session_containers.keys())}")
+
+    # Set CORS headers for WebSocket
+    origin = ws.headers.get('origin')
+    print(f"Origin: {origin}")
+
+    # Check if session exists
+    if sid not in session_containers:
+        error_msg = f"Session {sid} not found in {list(session_containers.keys())}"
+        print(f"Error: {error_msg}")
+        await ws.close(code=1008, reason=error_msg)
+        return
+
+    session = session_containers[sid]
+    container_id = session["container_id"]
+    user_id = session["user_id"]
+    exec_id = None
+    sock = None
+
+    print(f"Found container ID: {container_id} for user: {user_id}")
+
+    try:
+        print(f"WebSocket connection accepted for session: {sid}")
+        await ws.accept()
+        loop = asyncio.get_running_loop()
+
+        print(f"Found container ID: {container_id} for session: {sid} (user: {user_id})")
+        container = client.containers.get(container_id)
+        print(f"Container status: {container.status}")
+
+        # Ensure container is running
+        if container.status != 'running':
+            print(f"Container {container_id} is not running. Starting...")
+            container.start()
+
+        # Default terminal size
+        cols = 80
+        rows = 24
+
+        # Create exec instance
+        exec_config = client.api.exec_create(
+            container_id,
+            ["/bin/bash", "-i"],
+            tty=True,
+            stdin=True,
+            stdout=True,
+            stderr=True,
+            environment={
+                "TERM": "xterm-256color",
+                "COLUMNS": str(cols),
+                "LINES": str(rows),
+                "HOME": "/root",
+                "SHELL": "/bin/bash",
+                "USER": "root"
+            }
+        )
+        exec_id = exec_config["Id"]
+        print(f"Created exec instance: {exec_id}")
+
+        # Start the exec instance
+        sock = client.api.exec_start(exec_id, socket=True, tty=True)
+        print("Exec instance started")
+
+        async def handle_messages():
+            nonlocal cols, rows
+            try:
                 while True:
-                    data = await ws.receive_text()
-                    os.write(master_fd, data.encode())
+                    message = await ws.receive()
+                    text = message.get("text", "")
+                    # Only try to parse JSON resize if it actually _looks_ like an object
+                    if text.startswith("{"):
+                        try:
+                            payload = json.loads(text)
+                            # Ensure it’s a dict and has a “type” key
+                            if isinstance(payload, dict) and payload.get("type") == "resize":
+                                new_cols = payload.get("cols", cols)
+                                new_rows = payload.get("rows", rows)
+                                if (new_cols, new_rows) != (cols, rows):
+                                    print(f"Resizing terminal: {cols}x{rows} -> {new_cols}x{new_rows}")
+                                    cols, rows = new_cols, new_rows
+                                    # positional args only
+                                    await loop.run_in_executor(
+                                        None,
+                                        client.api.exec_resize,
+                                        exec_id,
+                                        rows,
+                                        cols
+                                    )
+                                # skip the “send to shell” below
+                                continue
+                        except json.JSONDecodeError:
+                            # not valid JSON — fall through
+                            pass
 
-        except (WebSocketDisconnect, asyncio.CancelledError):
-            # This happens when the user closes their terminal/browser tab
-            print(f"Session {user_id} disconnected.")
-        finally:
-            # This 'finally' block is for cleaning up the PTY, not the directory.
-            # The directory is cleaned up automatically by the 'with' statement
-            # after this function returns.
-            if 'loop' in locals() and 'master_fd' in locals():
-                loop.remove_reader(master_fd)
-                os.close(master_fd)
+                    # If it wasn’t a resize object, send raw text to the container
+                    if text and hasattr(sock, "_sock"):
+                        print(f"Sending text data to container: {repr(text)}")
+                        sock._sock.send(text.encode("utf-8"))
 
-            print(f"Cleaned up PTY for session {user_id}. Temporary directory {temp_dir} will now be removed.")
+                    # And handle any binary frames as before
+                    if "bytes" in message and hasattr(sock, "_sock"):
+                        data = message["bytes"]
+                        print(f"Sending binary data to container: {len(data)} bytes")
+                        sock._sock.send(data)
+            except Exception as e:
+                print(f"Error in handle_messages: {e}")
+                raise
 
-if __name__ == "__main__":
-    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)
+
+        async def read_from_container():
+            try:
+                while True:
+                    # pull raw bytes off the underlying socket
+                    data = await loop.run_in_executor(
+                        None,
+                        sock._sock.recv,
+                        4096
+                    )
+                    if not data:
+                        break
+                    await ws.send_bytes(data)
+            except Exception as e:
+                print(f"Error reading from container: {e}")
+                raise
+
+        # Start both tasks
+        await asyncio.gather(
+            read_from_container(),
+            handle_messages(),  
+            return_exceptions=True
+        )
+
+    except Exception as e:
+        print(f"WebSocket error: {e}")
+        print(traceback.format_exc())
+        try:
+            await ws.close(code=1011, reason=str(e))
+        except:
+            pass
+    finally:
+        # Clean up
+        print("Cleaning up WebSocket connection")
+        if exec_id:
+            try:
+                client.api.kill(exec_id)
+                print(f"Terminated exec instance: {exec_id}")
+            except:
+                pass
+        if sock:
+            try:
+                sock.close()
+            except:
+                pass
