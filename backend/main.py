@@ -6,6 +6,8 @@ import uuid, asyncio, json, traceback
 import tarfile
 import io
 import os
+from user_file_system import FileSystemManager
+from postgres import NeonDB
 
 app = FastAPI()
 client = docker.from_env()
@@ -17,6 +19,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+neon_db = NeonDB()
 
 # In-memory storage for session -> container mapping
 # In production, you'd use a proper database
@@ -75,11 +79,11 @@ def get_or_create_container(user_id: str):
     print(f"Creating new container for user {user_id}")
     container = client.containers.run(
         "ehcaw/lsclear-sandbox:latest",
-        command=["/bin/sleep", "infinity"],  # Keep container running
+        command=["tail", "-f", "/dev/null"],  # Keep container running
         tty=True,
         detach=True,
-        working_dir="/root",
-        network_disabled=True,
+        working_dir="/workspace",
+        network_disabled=False,
         mem_limit="1g",  # Increased memory limit
         cpu_quota=50000,
         labels={"user_id": user_id, "managed_by": "terminal"},
@@ -90,7 +94,9 @@ def get_or_create_container(user_id: str):
             "TERM": "xterm-256color",
             "HOME": "/root",
             "SHELL": "/bin/bash",
-            "USER": "root"
+            "USER": "root",
+            "DEBIAN_FRONTEND": "noninteractive"  # Add this to prevent interactive prompts
+
         },
         volumes={
             '/var/run/docker.sock': {
@@ -104,6 +110,7 @@ def get_or_create_container(user_id: str):
     # Install basic tools
     exit_code, output = container.exec_run(
         "apt-get update && apt-get install -y bash-completion vim nano curl wget git",
+        environment={"DEBIAN_FRONTEND": "noninteractive"},
         tty=True
     )
     
@@ -147,6 +154,10 @@ async def create_session(user_data: dict):
             "user_id": user_id,
             "created_at": datetime.utcnow().isoformat()
         }
+
+        # prepopulate file structure into the container
+        file_manager = FileSystemManager(user_id=user_id, container_id=container.id, base_path="/workspace")
+        file_manager.initialize_file_structure()
 
         return {
             "session_id": sid,

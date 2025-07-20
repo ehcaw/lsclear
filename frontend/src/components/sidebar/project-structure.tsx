@@ -17,6 +17,7 @@ import {
   ChevronRightIcon,
   ChevronDownIcon,
 } from "lucide-react"; // Assuming you use lucide icons
+import useFileStore from "@/lib/files-store";
 
 interface FileNode {
   id: string;
@@ -25,10 +26,11 @@ interface FileNode {
 }
 
 interface ProjectStructureProps {
+  onSelectChange: (id: string) => void;
   data: { structure: FileNode[] };
 }
 
-export function ProjectStructure({ data }: ProjectStructureProps) {
+export function ProjectStructure({ data, onSelectChange }: ProjectStructureProps) {
   const [expandedFolders, setExpandedFolders] = useState<
     Record<string, boolean>
   >({});

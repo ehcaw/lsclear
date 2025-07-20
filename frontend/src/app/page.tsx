@@ -7,6 +7,7 @@ const MonacoEditor = dynamic(
   () => import('@/components/editor/dynamic-editor'),
   { ssr: false }
 );
+import { EditorPlaceholder } from "@/components/editor/editor-placeholder";
 import {
   Play,
   Plus,
@@ -143,7 +144,6 @@ export default function Home() {
   const handleFileSelect = (item: TreeDataItem | undefined) => {
     if (item && !item.children) {
       console.log("File selected:", item.name);
-      // setCurrentFile(item);
       setActiveFileId(item.id);
       // Add logic to open the file
     }
@@ -265,21 +265,6 @@ export default function Home() {
     );
   }
 
-  // No active file
-  if (!currentFile) {
-    return (
-      <div className="flex h-screen items-center justify-center">
-        <div className="text-center">
-          <p className="mb-4">No files available</p>
-          <Button onClick={() => setNewFileDialogOpen(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            Create New File
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-col h-screen bg-background">
       {/* Header */}
@@ -340,32 +325,39 @@ export default function Home() {
 
         {/* Main Content */}
         <div className="flex-1 flex flex-col">
-          {/* File Header */}
-          <div className="bg-muted/40 border-b flex items-center px-4 py-1.5">
-            <FileCode className="h-4 w-4 mr-2 text-muted-foreground" />
-            <span className="text-sm font-medium">{currentFile.name}</span>
-            {isLoading && (
-              <div className="ml-2 animate-spin rounded-full h-3 w-3 border-b-2 border-primary"></div>
+              {/* File Header */}
+              {currentFile ? (
+              <>
+                {/* File Header */}
+                <div className="bg-muted/40 border-b flex items-center px-4 py-1.5">
+                  <FileCode className="h-4 w-4 mr-2 text-muted-foreground" />
+                  <span className="text-sm font-medium">{currentFile.name}</span>
+                  {isLoading && (
+                    <div className="ml-2 animate-spin rounded-full h-3 w-3 border-b-2 border-primary"></div>
+                  )}
+                </div>
+            
+                {/* Editor */}
+                <div className="flex-1 overflow-hidden">
+                  <MonacoEditor
+                    value={currentFile.content}
+                    onChange={handleCodeChange}
+                    language={currentFile.language}
+                    theme={theme === "dark" ? "vs-dark" : "vs-light"}
+                    options={{
+                      minimap: { enabled: true },
+                      fontSize: 14,
+                      scrollBeyondLastLine: false,
+                      wordWrap: "on",
+                      automaticLayout: true,
+                      padding: { top: 10 },
+                    }}
+                  />
+                </div>
+              </>
+            ) : (
+              <EditorPlaceholder />
             )}
-          </div>
-
-          {/* Editor */}
-          <div className="flex-1 overflow-hidden">
-            <MonacoEditor
-              value={currentFile.content}
-              onChange={handleCodeChange}
-              language={currentFile.language}
-              theme={theme === "dark" ? "vs-dark" : "vs-light"}
-              options={{
-                minimap: { enabled: true },
-                fontSize: 14,
-                scrollBeyondLastLine: false,
-                wordWrap: "on",
-                automaticLayout: true,
-                padding: { top: 10 },
-              }}
-            />
-          </div>
 
           {/* Console Output */}
           <Card className="rounded-none border-t border-l-0 border-r-0 border-b-0">

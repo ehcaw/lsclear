@@ -3,7 +3,6 @@ import { create } from "zustand";
 interface File {
   id: string;
   name: string;
-  language: string;
   content: string;
   created_at?: string;
   updated_at?: string;
@@ -38,23 +37,7 @@ const useFileStore = create<FileStore>((set, get) => ({
   error: null,
 
   initWithDefaults: () => {
-    const defaultFiles = [
-      {
-        id: "main.py",
-        name: "main.py",
-        language: "python",
-        content: `# Welcome to Python Sandbox!
-print("Hello World!")
-
-# Try changing this function
-def greet(name):
-    return f"Hello, {name}!"
-
-print(greet("Developer"))
-`,
-      },
-    ];
-
+    const defaultFiles = [];
     set({
       files: defaultFiles,
       activeFileId: "main.py",
@@ -149,6 +132,7 @@ print(greet("Developer"))
       }
 
       const data = await response.json();
+      console.log(data);
       const newFile = data.file;
 
       set((state) => ({
