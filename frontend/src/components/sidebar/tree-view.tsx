@@ -18,9 +18,10 @@ const dragOverVariants = cva(
     'before:opacity-100 before:bg-primary/20 text-primary-foreground'
 )
 
-interface TreeDataItem {
+export interface TreeDataItem {
     id: string
     name: string
+    type: 'file' | 'directory'
     icon?: any
     selectedIcon?: any
     openIcon?: any

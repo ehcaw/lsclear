@@ -17,7 +17,7 @@ interface ProjectData {
 
 interface SidebarProps {
   userId: string;
-  onSelectChange: (id: TreeDataItem | undefined) => void;
+  onSelectChange: (id: string) => void;
 }
 
 // Fetcher function for useSWR
@@ -41,6 +41,6 @@ export function Sidebar({userId, onSelectChange}: SidebarProps) {
   if (error) return <div>Error loading project structure: {error.message}</div>;
   if (!projectData) return <div>No project data available</div>;
 
-  return <ProjectStructure data={projectData} />;
+  return <ProjectStructure data={projectData} onSelectChange={onSelectChange} />;
 }
 

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import {
   Sidebar,
   SidebarContent,
@@ -20,8 +20,13 @@ import {
 import useFileStore from "@/lib/files-store";
 
 interface FileNode {
-  id: string;
+  id: number;
+  parent_id: number | null;
   name: string;
+  is_dir?: boolean;
+  content: string | null;
+  created_at: string;
+  updated_at: string;
   children?: FileNode[];
 }
 
@@ -31,6 +36,10 @@ interface ProjectStructureProps {
 }
 
 export function ProjectStructure({ data, onSelectChange }: ProjectStructureProps) {
+
+  const { fileTree, fileMap, setFileMap}  = useFileStore();
+  console.log(data)
+  console.log(fileTree);
   const [expandedFolders, setExpandedFolders] = useState<
     Record<string, boolean>
   >({});
@@ -41,6 +50,30 @@ export function ProjectStructure({ data, onSelectChange }: ProjectStructureProps
       [id]: !prev[id],
     }));
   };
+  const buildFileMap = (nodes: FileNode[]): Record<string, FileNode> => {
+    const map: Record<string, FileNode> = {};
+    
+    const processNode = (node: FileNode, currentPath: string = '') => {
+      const nodePath = currentPath ? `${currentPath}/${node.name}` : node.name;
+      
+      // Only add files to the map, not directories
+      if (!node.is_dir) {
+        map[nodePath] = node;
+      }
+      
+      // Process children if they exist
+      if (node.children) {
+        node.children.forEach(child => processNode(child, nodePath));
+      }
+    };
+    
+    nodes.forEach(node => processNode(node));
+    setFileMap(map);
+    return map;
+  };
+
+  useMemo(() => buildFileMap(fileTree), [fileTree]);
+
 
   const renderNode = (node: FileNode) => {
     const isFolder = !!node.children;
@@ -77,7 +110,7 @@ export function ProjectStructure({ data, onSelectChange }: ProjectStructureProps
     }
 
     return (
-      <SidebarMenuSubButton key={node.id}>
+      <SidebarMenuSubButton key={node.id} onClick={() => onSelectChange(node.id)}>
         <FileIcon className="h-4 w-4 mr-2" />
         {node.name}
       </SidebarMenuSubButton>
@@ -89,7 +122,7 @@ export function ProjectStructure({ data, onSelectChange }: ProjectStructureProps
       <Sidebar>
         <SidebarContent>
           <SidebarGroup>
-            <SidebarMenu>{data.data[0].structure.map(renderNode)}</SidebarMenu>
+            <SidebarMenu>{data.data[0].structure.map(node => renderNode(node))}</SidebarMenu>
           </SidebarGroup>
         </SidebarContent>
       </Sidebar>

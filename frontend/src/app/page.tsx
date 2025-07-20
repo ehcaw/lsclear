@@ -19,26 +19,14 @@ import {
   FileCode,
   Trash2,
   User,
-  UserNav,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { createAuthClient } from "better-auth/react";
 const { useSession } = createAuthClient();
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardContent} from "@/components/ui/card";
+import { Tabs, TabsContent, } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Tooltip,
   TooltipContent,
@@ -46,21 +34,21 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Sidebar } from "@/components/sidebar/sidebar";
-import { Separator } from "@/components/ui/separator";
 import TerminalComponent from "@/components/terminal/terminal";
 import useFileStore from "@/lib/files-store";
 import { useRouter } from "next/navigation";
 import { getCurrentUser } from "@/utils/auth";
-import { TreeDataItem } from "@/components/sidebar/tree-view";
 
 // File type for our sandbox
-interface File {
-  id: string;
+interface FileNode {
+  id: number;
+  parent_id: number | null;
   name: string;
-  language: string;
-  content: string;
-  created_at?: string;
-  updated_at?: string;
+  is_dir: boolean;
+  content: string | null;
+  created_at: string;
+  updated_at: string;
+  children?: FileNode[];
 }
 
 export default function Home() {
@@ -68,20 +56,21 @@ export default function Home() {
   const router = useRouter();
 
   const {
-    userId,
-    files,
+    fileTree,
     activeFileId,
-    isLoading,
-    error,
-    setUserId,
-    loadFiles,
-    addFile,
-    updateFileContent,
-    deleteFile,
     setActiveFileId,
+    loadFileTree,
+    createFile,
+    createDirectory,
+    updateFileContent,
+    deleteNode,
     activeFile,
+    userId,
+    setUserId,
+    error,
+    fileMap
   } = useFileStore();
-
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [consoleOutput, setConsoleOutput] = useState<string[]>([]);
   const [newFileName, setNewFileName] = useState("");
   const [newFileDialogOpen, setNewFileDialogOpen] = useState(false);
@@ -90,6 +79,7 @@ export default function Home() {
     null,
   );
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const currentFile = activeFile();
 
   const {
     data: session,
@@ -98,10 +88,13 @@ export default function Home() {
     refetch, //refetch the session
   } = useSession();
 
-  // Load files on component mount
+  // Load file tree when component mounts
   useEffect(() => {
-    loadFiles();
-  }, [loadFiles]);
+    if (session?.user?.id) {
+      setUserId(session.user.id);
+      loadFileTree();
+    }
+  }, [session, setUserId, loadFileTree]);
 
   useEffect(() => {
     async function getUser() {
@@ -116,85 +109,58 @@ export default function Home() {
       setUserId(user.id || "");
     }
     getUser();
+    setIsLoading(false);
   }, [router]);
 
-  // Get current active file
-  const currentFile = activeFile();
-
   // Handle file content change with debouncing
-  const handleCodeChange = (value: string) => {
-    if (!currentFile) return;
-
-    // Clear existing timer
+  const handleEditorChange = (value: string | undefined) => {
+    if (!activeFileId || !value || !currentFile) return;
+    
+    // Update local state immediately for a responsive UI
+    updateFileContent(activeFileId, value);
+    
+    // Debounce the API call to save changes
     if (debounceTimer) {
       clearTimeout(debounceTimer);
     }
-
-    // Set new timer to save after 1 second of no changes
-    const newTimer = setTimeout(() => {
-      if (value !== lastSavedContent) {
-        updateFileContent(currentFile.id, value);
+    
+    const timer = setTimeout(async () => {
+      try {
+        await updateFileContent(activeFileId, value);
         setLastSavedContent(value);
+      } catch (error) {
+        console.error("Error saving file:", error);
+        // Handle error (e.g., show toast)
       }
     }, 1000);
-
-    setDebounceTimer(newTimer);
+    
+    setDebounceTimer(timer);
   };
 
-  const handleFileSelect = (item: TreeDataItem | undefined) => {
-    if (item && !item.children) {
-      console.log("File selected:", item.name);
-      setActiveFileId(item.id);
-      // Add logic to open the file
-    }
+  // Handle file selection from the tree view
+  const handleFileSelect = (filePath: string) => {
+    console.log(filePath)
+    // Find the file in your fileTree by path
+    setActiveFileId(fileMap[filePath].id);
   };
 
   // Update last saved content when active file changes
   useEffect(() => {
     if (currentFile) {
-      setLastSavedContent(currentFile.content);
+      setLastSavedContent(currentFile.content || "");
     }
   }, [currentFile?.id]);
 
-  // Handle adding new file
-  const handleAddFile = async () => {
-    if (!newFileName.trim()) return;
-
-    const extension = newFileName.split(".").pop() || "";
-    const languageMap: { [key: string]: string } = {
-      py: "python",
-      js: "javascript",
-      ts: "typescript",
-      tsx: "typescript",
-      jsx: "javascript",
-      html: "html",
-      css: "css",
-      json: "json",
-      md: "markdown",
-      txt: "plaintext",
-    };
-
-    const newFile = {
-      name: newFileName,
-      language: languageMap[extension] || "plaintext",
-      content: "",
-    };
-
-    await addFile(newFile);
-    setNewFileName("");
-    setNewFileDialogOpen(false);
-  };
-
-  // Handle file deletion
-  const handleDeleteFile = async (fileId: string) => {
-    if (files.length <= 1) {
-      alert("Cannot delete the last file!");
-      return;
+  // Helper function to find a file by ID
+  const findFileById = (id: number, nodes: FileNode[]): FileNode | undefined => {
+    for (const node of nodes) {
+      if (node.id === id) return node;
+      if (node.children) {
+        const found = findFileById(id, node.children);
+        if (found) return found;
+      }
     }
-
-    if (confirm("Are you sure you want to delete this file?")) {
-      await deleteFile(fileId);
-    }
+    return undefined;
   };
 
   // Run the code
@@ -215,32 +181,36 @@ export default function Home() {
     return () => window.removeEventListener("message", handleMessage);
   }, []);
 
-  const fileTreeData: TreeDataItem[] = [
-    {
-      id: "1",
-      name: "src",
-      children: [
-        { id: "2", name: "app.tsx" },
-        { id: "3", name: "styles.css" },
-        {
-          id: "4",
-          name: "components",
-          children: [{ id: "5", name: "button.tsx" }],
-        },
-      ],
-    },
-    {
-      id: "6",
-      name: "package.json",
-    },
-    {
-      id: "7",
-      name: "README.md",
-    },
-  ];
+  const renderEditor = () => {
+    if (!currentFile) {
+      return <EditorPlaceholder />;
+    }
+
+    const language = "python";
+    const content = currentFile.content || '';
+
+    return (
+      <div className="h-full w-full">
+        <MonacoEditor
+          key={currentFile.id}
+          language={language}
+          value={content}
+          onChange={handleEditorChange}
+          theme={theme === "dark" ? "vs-dark" : "light"}
+          options={{
+            minimap: { enabled: false },
+            scrollBeyondLastLine: false,
+            fontSize: 14,
+            wordWrap: "on",
+            automaticLayout: true,
+          }}
+        />
+      </div>
+    );
+  };
 
   // Loading state
-  if (isLoading && files.length === 0) {
+  if (isLoading && fileTree.length === 0) {
     return (
       <div className="flex h-screen items-center justify-center">
         <div className="text-center">
@@ -257,7 +227,7 @@ export default function Home() {
       <div className="flex h-screen items-center justify-center">
         <div className="text-center text-red-500">
           <p>Error: {error}</p>
-          <Button onClick={loadFiles} className="mt-4">
+          <Button onClick={loadFileTree} className="mt-4">
             Retry
           </Button>
         </div>
@@ -325,39 +295,24 @@ export default function Home() {
 
         {/* Main Content */}
         <div className="flex-1 flex flex-col">
+          {/* File Header */}
+          {currentFile ? (
+            <>
               {/* File Header */}
-              {currentFile ? (
-              <>
-                {/* File Header */}
-                <div className="bg-muted/40 border-b flex items-center px-4 py-1.5">
-                  <FileCode className="h-4 w-4 mr-2 text-muted-foreground" />
-                  <span className="text-sm font-medium">{currentFile.name}</span>
-                  {isLoading && (
-                    <div className="ml-2 animate-spin rounded-full h-3 w-3 border-b-2 border-primary"></div>
-                  )}
-                </div>
+              <div className="bg-muted/40 border-b flex items-center px-4 py-1.5">
+                <FileCode className="h-4 w-4 mr-2 text-muted-foreground" />
+                <span className="text-sm font-medium">{currentFile.name}</span>
+                {isLoading && (
+                  <div className="ml-2 animate-spin rounded-full h-3 w-3 border-b-2 border-primary"></div>
+                )}
+              </div>
             
-                {/* Editor */}
-                <div className="flex-1 overflow-hidden">
-                  <MonacoEditor
-                    value={currentFile.content}
-                    onChange={handleCodeChange}
-                    language={currentFile.language}
-                    theme={theme === "dark" ? "vs-dark" : "vs-light"}
-                    options={{
-                      minimap: { enabled: true },
-                      fontSize: 14,
-                      scrollBeyondLastLine: false,
-                      wordWrap: "on",
-                      automaticLayout: true,
-                      padding: { top: 10 },
-                    }}
-                  />
-                </div>
-              </>
-            ) : (
-              <EditorPlaceholder />
-            )}
+              {/* Editor */}
+              {renderEditor()}
+            </>
+          ) : (
+            <EditorPlaceholder />
+          )}
 
           {/* Console Output */}
           <Card className="rounded-none border-t border-l-0 border-r-0 border-b-0">

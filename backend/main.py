@@ -1,9 +1,8 @@
 from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 import docker
 import uuid, asyncio, json, traceback
-import tarfile
 import io
 import os
 from user_file_system import FileSystemManager
@@ -47,14 +46,6 @@ def cleanup_old_containers():
                     print(f"Error cleaning up container {container.id}: {e}")
     except Exception as e:
         print(f"Error in cleanup_old_containers: {e}")
-
-def make_tar_archive(name, file_path):
-    """Create a tar archive for a single file"""
-    tar_buffer = io.BytesIO()
-    with tarfile.open(fileobj=tar_buffer, mode='w') as tar:
-        tar.add(file_path, arcname=name)
-    tar_buffer.seek(0)
-    return tar_buffer.getvalue()
 
 def get_or_create_container(user_id: str):
     """Get existing container for user or create a new one"""
@@ -152,7 +143,7 @@ async def create_session(user_data: dict):
         session_containers[sid] = {
             "container_id": container.id,
             "user_id": user_id,
-            "created_at": datetime.utcnow().isoformat()
+            "created_at": datetime.now(timezone.utc).isoformat()
         }
 
         # prepopulate file structure into the container
@@ -183,24 +174,13 @@ async def get_file(sid: str, name: str):
     container_id = session_containers[sid]
     try:
         container = client.containers.get(container_id)
-        # Get file from container
-        bits, stat = container.get_archive(f"/workspace/{name}")
-        # Extract file content from tar archive
-        tar_buffer = io.BytesIO()
-        for chunk in bits:
-            tar_buffer.write(chunk)
-        tar_buffer.seek(0)
-
-        with tarfile.open(fileobj=tar_buffer, mode='r') as tar:
-            file_obj = tar.extractfile(name)
-            if file_obj:
-                content = file_obj.read().decode('utf-8')
-                return {"content": content}
-            else:
-                raise HTTPException(status_code=404, detail="File not found")
-    except docker.errors.NotFound:
-        raise HTTPException(status_code=404, detail="Container not found")
+        # Get file content directly from the container
+        exit_code, output = container.exec_run(f"cat /workspace/{name}")
+        if exit_code != 0:
+            raise HTTPException(status_code=404, detail="File not found")
+        return {"content": output.decode('utf-8')}
     except Exception as e:
+        print(f"Error getting file: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/api/files/{sid}/{name}")
@@ -218,9 +198,6 @@ async def save_file(sid: str, name: str, content: str):
         with open(temp_file, "w") as f:
             f.write(content)
 
-        # Create tar archive and put it in container
-        tar_data = make_tar_archive(name, temp_file)
-        container.put_archive("/workspace", tar_data)
 
         # Clean up temp file
         os.remove(temp_file)
