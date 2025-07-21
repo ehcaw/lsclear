@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Sidebar,
   SidebarContent,
@@ -8,7 +8,6 @@ import {
   SidebarMenuButton,
   SidebarMenuSub,
   SidebarMenuSubItem,
-  SidebarMenuSubButton,
   SidebarProvider,
 } from "@/components/ui/sidebar";
 import {
@@ -23,33 +22,30 @@ interface FileNode {
   id: number;
   parent_id: number | null;
   name: string;
-  is_dir?: boolean;
+  is_dir: boolean;
   content: string | null;
   created_at: string;
   updated_at: string;
   children?: FileNode[];
 }
 
-interface ProjectStructureProps {
+interface ProjectStructureProps { 
   onSelectChange: (id: string) => void;
-  data: { structure: FileNode[] };
+  data: FileNode[];
 }
 
 export function ProjectStructure({ data, onSelectChange }: ProjectStructureProps) {
 
-  const { fileTree, fileMap, setFileMap}  = useFileStore();
-  console.log(data)
-  console.log(fileTree);
-  const [expandedFolders, setExpandedFolders] = useState<
-    Record<string, boolean>
-  >({});
+  const { setFileMap } = useFileStore();
+  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
 
-  const toggleFolder = (id: string) => {
+  const toggleFolder = (id: number) => {
     setExpandedFolders((prev) => ({
       ...prev,
       [id]: !prev[id],
     }));
   };
+
   const buildFileMap = (nodes: FileNode[]): Record<string, FileNode> => {
     const map: Record<string, FileNode> = {};
     
@@ -58,7 +54,7 @@ export function ProjectStructure({ data, onSelectChange }: ProjectStructureProps
       
       // Only add files to the map, not directories
       if (!node.is_dir) {
-        map[nodePath] = node;
+        map[node.id] = node;
       }
       
       // Process children if they exist
@@ -67,16 +63,19 @@ export function ProjectStructure({ data, onSelectChange }: ProjectStructureProps
       }
     };
     
+    // Process the root nodes
     nodes.forEach(node => processNode(node));
     setFileMap(map);
     return map;
   };
 
-  useMemo(() => buildFileMap(fileTree), [fileTree]);
-
+  // Only build file map once when component mounts or data changes
+  useEffect(() => {
+    buildFileMap(data);
+  }, [data]);
 
   const renderNode = (node: FileNode) => {
-    const isFolder = !!node.children;
+    const isFolder = node.is_dir;
     const isExpanded = expandedFolders[node.id] || false;
 
     if (isFolder) {
@@ -110,10 +109,14 @@ export function ProjectStructure({ data, onSelectChange }: ProjectStructureProps
     }
 
     return (
-      <SidebarMenuSubButton key={node.id} onClick={() => onSelectChange(node.id)}>
-        <FileIcon className="h-4 w-4 mr-2" />
-        {node.name}
-      </SidebarMenuSubButton>
+      <SidebarMenuItem key={node.id}>
+        <SidebarMenuButton
+          onClick={() => onSelectChange(node.id.toString())}
+          icon={<FileIcon className="h-4 w-4" />}
+        >
+          {node.name}
+        </SidebarMenuButton>
+      </SidebarMenuItem>
     );
   };
 
@@ -122,7 +125,11 @@ export function ProjectStructure({ data, onSelectChange }: ProjectStructureProps
       <Sidebar>
         <SidebarContent>
           <SidebarGroup>
-            <SidebarMenu>{data.data[0].structure.map(node => renderNode(node))}</SidebarMenu>
+            <SidebarMenu>
+              {data.map((node) => (
+                <div key={node.id}>{renderNode(node)}</div>
+              ))}
+            </SidebarMenu>
           </SidebarGroup>
         </SidebarContent>
       </Sidebar>

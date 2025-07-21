@@ -4,20 +4,11 @@ interface FileNode {
   id: number;
   parent_id: number | null;
   name: string;
-  is_dir?: boolean;
+  is_dir: boolean;
   content: string | null;
   created_at: string;
   updated_at: string;
   children?: FileNode[];
-}
-
-interface File {
-  id: number;
-  path: string;
-  name: string;
-  content: string;
-  created_at: string;
-  updated_at: string;
 }
 
 interface FileStore {

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, WebSocket
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone
 import docker
@@ -7,6 +7,16 @@ import io
 import os
 from user_file_system import FileSystemManager
 from postgres import NeonDB
+from file_watcher import start_user_watcher
+from pydantic import BaseModel
+import shlex
+from db_update_manager import ws_manager, notify_file_update
+
+class FSEvent(BaseModel):
+    user_id: str
+    cmd: str
+    cwd: str | None = "/workspace"
+
 
 app = FastAPI()
 client = docker.from_env()
@@ -69,7 +79,7 @@ def get_or_create_container(user_id: str):
     # Create new container if none exists
     print(f"Creating new container for user {user_id}")
     container = client.containers.run(
-        "ehcaw/lsclear-sandbox:latest",
+        "ehcaw/lsclear:latest",
         command=["tail", "-f", "/dev/null"],  # Keep container running
         tty=True,
         detach=True,
@@ -86,8 +96,9 @@ def get_or_create_container(user_id: str):
             "HOME": "/root",
             "SHELL": "/bin/bash",
             "USER": "root",
-            "DEBIAN_FRONTEND": "noninteractive"  # Add this to prevent interactive prompts
-
+            "DEBIAN_FRONTEND": "noninteractive",  # Add this to prevent interactive prompts
+            "USER_ID": user_id,
+            "FASTAPI_URL": os.getenv("FASTAPI_URL"),
         },
         volumes={
             '/var/run/docker.sock': {
@@ -95,7 +106,8 @@ def get_or_create_container(user_id: str):
                 'mode': 'ro'
             }
         },
-        privileged=True  # Required for some operations
+        privileged=True,  # Required for some operations
+        extra_hosts={"host.docker.internal": "host-gateway"},    
     )
     
     # Install basic tools
@@ -113,8 +125,35 @@ def get_or_create_container(user_id: str):
         container.exec_run("echo \"alias ll='ls -la'\" >> /root/.bashrc", tty=True)
         # Set proper permissions
         container.exec_run("chmod 644 /root/.bashrc", tty=True)
+        container.exec_run(
+            f'''bash -lc 'cat <<"EOF" >> /root/.bashrc
+        # ---- IDE sync-hook ----
+        export IDE_API="http://host.docker.internal:8000"
+        export USER_ID="{user_id}"
+        export IDE_USER="$USER_ID"
+
+        preexec() {{
+        local cmd="$BASH_COMMAND"
+        local cwd="$(pwd -P)"           # absolute working dir
+        case "$cmd" in
+            touch*|mkdir*|rm*|mv*|cp*|cd*)   # include cd so backend can track dirs
+            curl -s -X POST "$IDE_API/api/fs-event" \\
+                -H "Content-Type: application/json" \\
+                -d "{{\\"user_id\\":\\"$IDE_USER\\",\\"cmd\\":\\"$cmd\\",\\"cwd\\":\\"$cwd\\"}}" \\
+                >/dev/null 2>&1
+            ;;
+        esac
+        }}
+        trap preexec DEBUG
+        # ------------------------
+        EOF
+        ' ''',
+            tty=True
+        )
+        container.exec_run("source ~/.bashrc", tty=True)
     except Exception as e:
         print(f"Warning: Failed to set up bashrc: {e}")
+
     
     print(f"Created new container {container.id} for user {user_id}")
     return container
@@ -149,6 +188,7 @@ async def create_session(user_data: dict):
         # prepopulate file structure into the container
         file_manager = FileSystemManager(user_id=user_id, container_id=container.id, base_path="/workspace")
         file_manager.initialize_file_structure()
+        
 
         return {
             "session_id": sid,
@@ -164,6 +204,343 @@ async def create_session(user_data: dict):
             except:
                 pass
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/fs-event")
+async def fs_event(evt: FSEvent):
+    print("Received:", evt)
+
+    # ── 1. split once ───────────────────────────────────────────────
+    action, *args = shlex.split(evt.cmd)        # args is now a **list**
+    if not args:                                # user just hit <Enter>
+        return {"ok": True}
+
+    # ── 2. make paths absolute & safe ───────────────────────────────
+    def _abs(p: str) -> str:
+        p = p if os.path.isabs(p) else os.path.join(evt.cwd, p)
+        full = os.path.normpath(p)
+        if not full.startswith("/workspace"):
+            raise HTTPException(400, "Path escapes workspace")
+        return full
+
+    # ── 3. grab the user’s running container ────────────────────────
+    container_id = user_containers.get(evt.user_id)
+    if not container_id:
+        raise HTTPException(404, "No live container for user")
+
+    fsm = FileSystemManager(evt.user_id, container_id, base_path="/workspace")
+
+    # ── 4. handle each verb ─────────────────────────────────────────
+    try:
+        if action == "touch":
+            path = _abs(args[0])
+            rel_path = os.path.relpath(path, "/workspace")
+            # Create parent directories if they don't exist
+            parent_path = os.path.dirname(rel_path)
+            parent_id = None
+            
+            if parent_path and parent_path != '.':
+                # Find or create parent directory
+                parent_parts = parent_path.split(os.path.sep)
+                current_parent_id = None
+                
+                for part in parent_parts:
+                    try:
+                        # Try to find existing parent
+                        if current_parent_id is None:
+                            cursor = fsm.db.conn.cursor()
+                            cursor.execute(
+                                "SELECT id FROM fs_nodes WHERE user_id = %s AND parent_id IS NULL AND name = %s",
+                                (evt.user_id, part)
+                            )
+                        else:
+                            cursor = fsm.db.conn.cursor()
+                            cursor.execute(
+                                "SELECT id FROM fs_nodes WHERE user_id = %s AND parent_id = %s AND name = %s",
+                                (evt.user_id, current_parent_id, part)
+                            )
+                            
+                        result = cursor.fetchone()
+                        if result:
+                            current_parent_id = result[0]
+                        else:
+                            # Create the directory if it doesn't exist
+                            new_dir = fsm.db.create_node(
+                                user_id=evt.user_id,
+                                name=part,
+                                is_dir=True,
+                                parent_id=current_parent_id
+                            )
+                            current_parent_id = new_dir['id']
+                            
+                    except Exception as e:
+                        print(f"Error creating parent directories: {e}")
+                        raise
+                    
+                    parent_id = current_parent_id
+            
+            # Create the file
+            file_name = os.path.basename(rel_path)
+            try:
+                fsm.db.create_node(
+                    user_id=evt.user_id,
+                    name=file_name,
+                    is_dir=False,
+                    parent_id=parent_id,
+                    content=""
+                )
+                # Create the actual file in the container
+                fsm.container.exec_run(f"touch {path}", tty=True)
+                await notify_file_update(evt.user_id, "create", path)
+            except Exception as e:
+                if "duplicate" in str(e).lower():
+                    # File exists, update it
+                    pass  # Just continue, the file is already there
+                else:
+                    raise
+                    
+        elif action == "mkdir":
+            path = _abs(args[0])
+            rel_path = os.path.relpath(path, "/workspace")
+            parent_path = os.path.dirname(rel_path)
+            dir_name = os.path.basename(rel_path)
+            parent_id = None
+            
+            # Handle parent directories
+            if parent_path and parent_path != '.':
+                # Find or create parent directories
+                parent_parts = parent_path.split(os.path.sep)
+                current_parent_id = None
+                
+                for part in parent_parts:
+                    try:
+                        if current_parent_id is None:
+                            cursor = fsm.db.conn.cursor()
+                            cursor.execute(
+                                "SELECT id FROM fs_nodes WHERE user_id = %s AND parent_id IS NULL AND name = %s",
+                                (evt.user_id, part)
+                            )
+                        else:
+                            cursor = fsm.db.conn.cursor()
+                            cursor.execute(
+                                "SELECT id FROM fs_nodes WHERE user_id = %s AND parent_id = %s AND name = %s",
+                                (evt.user_id, current_parent_id, part)
+                            )
+                            
+                        result = cursor.fetchone()
+                        if result:
+                            current_parent_id = result[0]
+                        else:
+                            # Create the directory if it doesn't exist
+                            new_dir = fsm.db.create_node(
+                                user_id=evt.user_id,
+                                name=part,
+                                is_dir=True,
+                                parent_id=current_parent_id
+                            )
+                            current_parent_id = new_dir['id']
+                            
+                    except Exception as e:
+                        print(f"Error creating parent directories: {e}")
+                        raise
+                    
+                    parent_id = current_parent_id
+            
+            # Create the directory
+            try:
+                fsm.db.create_node(
+                    user_id=evt.user_id,
+                    name=dir_name,
+                    is_dir=True,
+                    parent_id=parent_id
+                )
+                # Create the actual directory in the container
+                fsm.container.exec_run(f"mkdir -p {path}", tty=True)
+                await notify_file_update(evt.user_id, "create", path)
+            except Exception as e:
+                if "duplicate" in str(e).lower():
+                    # Directory exists, that's fine
+                    pass
+                else:
+                    raise
+                    
+        elif action == "rm":
+            path = _abs(args[0])
+            rel_path = os.path.relpath(path, "/workspace")
+            
+            # Find the node in the database
+            cursor = fsm.db.conn.cursor()
+            cursor.execute(
+                """
+                WITH RECURSIVE nodes_to_delete AS (
+                    SELECT id, is_dir FROM fs_nodes 
+                    WHERE user_id = %s AND name = %s AND parent_id IS NULL
+                    
+                    UNION ALL
+                    
+                    SELECT f.id, f.is_dir FROM fs_nodes f
+                    JOIN nodes_to_delete n ON f.parent_id = n.id
+                    WHERE f.user_id = %s
+                )
+                SELECT id, is_dir FROM nodes_to_delete
+                """,
+                (evt.user_id, rel_path, evt.user_id)
+            )
+            
+            nodes_to_delete = cursor.fetchall()
+            
+            if not nodes_to_delete:
+                # Try to find the node with parent path
+                path_parts = rel_path.split(os.path.sep)
+                if len(path_parts) > 1:
+                    parent_path = os.path.sep.join(path_parts[:-1])
+                    file_name = path_parts[-1]
+                    
+                    # Find parent ID
+                    parent_id = None
+                    parent_parts = parent_path.split(os.path.sep)
+                    current_parent_id = None
+                    
+                    for part in parent_parts:
+                        if current_parent_id is None:
+                            cursor.execute(
+                                "SELECT id FROM fs_nodes WHERE user_id = %s AND parent_id IS NULL AND name = %s",
+                                (evt.user_id, part)
+                            )
+                        else:
+                            cursor.execute(
+                                "SELECT id FROM fs_nodes WHERE user_id = %s AND parent_id = %s AND name = %s",
+                                (evt.user_id, current_parent_id, part)
+                            )
+                            
+                        result = cursor.fetchone()
+                        if not result:
+                            raise HTTPException(404, "File or directory not found")
+                        current_parent_id = result[0]
+                    
+                    parent_id = current_parent_id
+                    
+                    # Now find the node with this parent
+                    cursor.execute(
+                        "SELECT id, is_dir FROM fs_nodes WHERE user_id = %s AND parent_id = %s AND name = %s",
+                        (evt.user_id, parent_id, file_name)
+                    )
+                    nodes_to_delete = cursor.fetchall()
+            
+            if not nodes_to_delete:
+                raise HTTPException(404, "File or directory not found")
+                
+            # Delete from database (cascading delete will handle children)
+            for node_id, is_dir in nodes_to_delete:
+                fsm.db.delete_node(evt.user_id, node_id)
+            
+            # Delete from container
+            fsm.container.exec_run(f"rm -rf {path}", tty=True)
+            await notify_file_update(evt.user_id, "delete", path)
+            
+        elif action == "mv" and len(args) == 2:
+            src = _abs(args[0])
+            dest = _abs(args[1])
+            
+            # Get source path relative to workspace
+            src_rel = os.path.relpath(src, "/workspace")
+            dest_rel = os.path.relpath(dest, "/workspace")
+            
+            # Find source node in database
+            cursor = fsm.db.conn.cursor()
+            
+            # First try to find the node with the full path
+            cursor.execute("""
+                WITH RECURSIVE node_path AS (
+                    SELECT id, parent_id, name, is_dir, ARRAY[name] as path
+                    FROM fs_nodes 
+                    WHERE user_id = %s AND parent_id IS NULL
+                    
+                    UNION ALL
+                    
+                    SELECT f.id, f.parent_id, f.name, f.is_dir, np.path || f.name
+                    FROM fs_nodes f
+                    JOIN node_path np ON f.parent_id = np.id
+                    WHERE f.user_id = %s
+                )
+                SELECT id, is_dir FROM node_path 
+                WHERE array_to_string(path, '/') = %s
+            """, (evt.user_id, evt.user_id, src_rel))
+            
+            result = cursor.fetchone()
+            
+            if not result:
+                # If not found with full path, try to find by name (last resort)
+                src_name = os.path.basename(src_rel)
+                cursor.execute(
+                    "SELECT id, is_dir FROM fs_nodes WHERE user_id = %s AND name = %s",
+                    (evt.user_id, src_name)
+                )
+                result = cursor.fetchone()
+                if not result:
+                    raise HTTPException(404, "Source file or directory not found")
+            
+            node_id, is_dir = result
+            
+            # Handle destination parent directory
+            dest_parent_rel = os.path.dirname(dest_rel)
+            dest_name = os.path.basename(dest_rel)
+            
+            dest_parent_id = None
+            if dest_parent_rel and dest_parent_rel != '.':
+                # Find or create parent directories
+                parent_parts = dest_parent_rel.split(os.path.sep)
+                current_parent_id = None
+                
+                for part in parent_parts:
+                    try:
+                        if current_parent_id is None:
+                            cursor.execute(
+                                "SELECT id FROM fs_nodes WHERE user_id = %s AND parent_id IS NULL AND name = %s",
+                                (evt.user_id, part)
+                            )
+                        else:
+                            cursor.execute(
+                                "SELECT id FROM fs_nodes WHERE user_id = %s AND parent_id = %s AND name = %s",
+                                (evt.user_id, current_parent_id, part)
+                            )
+                            
+                        result = cursor.fetchone()
+                        if result:
+                            current_parent_id = result[0]
+                        else:
+                            # Create the directory if it doesn't exist
+                            new_dir = fsm.db.create_node(
+                                user_id=evt.user_id,
+                                name=part,
+                                is_dir=True,
+                                parent_id=current_parent_id
+                            )
+                            current_parent_id = new_dir['id']
+                            
+                    except Exception as e:
+                        print(f"Error creating parent directories: {e}")
+                        raise
+                    
+                    dest_parent_id = current_parent_id
+            
+            # Update the node in the database
+            cursor.execute(
+                "UPDATE fs_nodes SET name = %s, parent_id = %s, updated_at = NOW() WHERE id = %s",
+                (dest_name, dest_parent_id, node_id)
+            )
+            
+            # Move the file/directory in the container
+            fsm.container.exec_run(f"mv {src} {dest}", tty=True)
+            await notify_file_update(evt.user_id, "move", src, dest)
+            
+        return {"ok": True}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in fs_event: {str(e)}")
+        print(traceback.format_exc())
+        raise HTTPException(500, str(e))
 
 @app.get("/api/files/{sid}/{name}")
 async def get_file(sid: str, name: str):
@@ -300,10 +677,6 @@ async def terminal_ws(ws: WebSocket, sid: str):
     print(f"Query params: {dict(ws.query_params)}")
     print(f"Available sessions: {list(session_containers.keys())}")
 
-    # Set CORS headers for WebSocket
-    origin = ws.headers.get('origin')
-    print(f"Origin: {origin}")
-
     # Check if session exists
     if sid not in session_containers:
         error_msg = f"Session {sid} not found in {list(session_containers.keys())}"
@@ -394,7 +767,6 @@ async def terminal_ws(ws: WebSocket, sid: str):
 
                     # If it wasn’t a resize object, send raw text to the container
                     if text and hasattr(sock, "_sock"):
-                        print(f"Sending text data to container: {repr(text)}")
                         sock._sock.send(text.encode("utf-8"))
 
                     # And handle any binary frames as before
@@ -451,3 +823,17 @@ async def terminal_ws(ws: WebSocket, sid: str):
                 sock.close()
             except:
                 pass
+
+@app.websocket("/db_update/ws/{user_id}")
+async def db_update_websocket(websocket: WebSocket, user_id: str):
+    # await websocket.accept()
+    await ws_manager.connect(user_id, websocket)
+    try:
+        while True:
+            # Keep connection alive, we only send messages from server
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        ws_manager.disconnect(user_id, websocket)
+    except Exception as e:
+        print(f"WebSocket error: {e}")
+        ws_manager.disconnect(user_id, websocket)

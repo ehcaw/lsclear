@@ -37,21 +37,22 @@ export async function getFileTreeForUser(userId: string): Promise<FileNode[]> {
     // First, get all nodes for the user
     const query = `
       WITH RECURSIVE file_tree AS (
-        SELECT id, parent_id, name, is_dir, content, created_at, updated_at
+        -- Base case: get all root nodes (where parent_id is null)
+        SELECT id, parent_id, name, is_dir, content, created_at, updated_at, 1 as level
         FROM fs_nodes 
-        WHERE user_id = $1
+        WHERE user_id = $1 AND parent_id IS NULL
         
         UNION ALL
         
-        SELECT f.id, f.parent_id, f.name, f.is_dir, f.content, f.created_at, f.updated_at
+        -- Recursive case: get all children of the current level
+        SELECT f.id, f.parent_id, f.name, f.is_dir, f.content, f.created_at, f.updated_at, ft.level + 1
         FROM fs_nodes f
         INNER JOIN file_tree ft ON f.parent_id = ft.id
         WHERE f.user_id = $1
       )
-      SELECT id, parent_id, name, is_dir, content, 
-             created_at, updated_at
+      SELECT DISTINCT ON (id) id, parent_id, name, is_dir, content, created_at, updated_at
       FROM file_tree
-      ORDER BY is_dir DESC, name;
+      ORDER BY id, level;
     `;
 
     const result = await client.query(query, [userId]);

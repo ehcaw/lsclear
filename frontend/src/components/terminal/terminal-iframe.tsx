@@ -13,13 +13,11 @@ const TerminalIframe: React.FC<TerminalIframeProps> = ({
   userId,
   apiBaseUrl = process.env.NEXT_PUBLIC_REACT_APP_API_URL || "",
 }) => {
-  console.log(userId);
   const terminalRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState("Loading...");
   const [error, setError] = useState<string | null>(null);
   const terminal = useRef<Terminal | null>(null);
   const fitAddon = useRef<FitAddon | null>(null);
-  const utf8Decoder = useRef<TextDecoder>(new TextDecoder());
 
   const ws = useRef<WebSocket | null>(null);
 
