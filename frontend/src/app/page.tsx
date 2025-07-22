@@ -10,15 +10,9 @@ const MonacoEditor = dynamic(
 import { EditorPlaceholder } from "@/components/editor/editor-placeholder";
 import {
   Play,
-  Plus,
-  Save,
-  Settings,
-  Code,
-  X,
-  Terminal,
-  FileCode,
-  Trash2,
-  User,
+Save,
+FileCode,
+User,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { createAuthClient } from "better-auth/react";
@@ -35,7 +29,7 @@ import {
 } from "@/components/ui/tooltip";
 import { Sidebar } from "@/components/sidebar/sidebar";
 import TerminalComponent from "@/components/terminal/terminal";
-import useFileStore from "@/lib/files-store";
+import useFileStore, { getFullPath} from "@/lib/files-store";
 import { useRouter } from "next/navigation";
 import { getCurrentUser } from "@/utils/auth";
 
@@ -60,11 +54,8 @@ export default function Home() {
     activeFileId,
     setActiveFileId,
     loadFileTree,
-    createFile,
-    createDirectory,
     updateFileContent,
-    deleteNode,
-    activeFile,
+  activeFile,
     userId,
     setUserId,
     error,
@@ -72,20 +63,12 @@ export default function Home() {
   } = useFileStore();
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [consoleOutput, setConsoleOutput] = useState<string[]>([]);
-  const [newFileName, setNewFileName] = useState("");
-  const [newFileDialogOpen, setNewFileDialogOpen] = useState(false);
-  const [lastSavedContent, setLastSavedContent] = useState("");
-  const [debounceTimer, setDebounceTimer] = useState<NodeJS.Timeout | null>(
-    null,
-  );
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [lastSavedContent, setLastSavedContent] = useState<string>('');
+  const [savingState, setSavingState] = useState<'unsaved' | 'saving' | 'saved'>('saved');
   const currentFile = activeFile();
 
   const {
-    data: session,
-    isPending, //loading state
-    error: err, //error object
-    refetch, //refetch the session
+    data: session
   } = useSession();
 
   // Load file tree when component mounts
@@ -104,52 +87,50 @@ export default function Home() {
         router.push("/login");
         return;
       }
-
-      console.log(user.id);
       setUserId(user.id || "");
     }
     getUser();
     setIsLoading(false);
   }, [router]);
 
-  // Handle file content change with debouncing
+  // Handle file content change - just update local state
   const handleEditorChange = (value: string | undefined) => {
     if (!activeFileId || !value || !currentFile) return;
+      setLastSavedContent(value);
+      setSavingState('unsaved');
+  };
+
+  // Handle save button click
+  const handleSave = async () => {
+    if (!activeFileId || !lastSavedContent) return;
     
-    // Update local state immediately for a responsive UI
-    updateFileContent(activeFileId, value);
-    
-    // Debounce the API call to save changes
-    if (debounceTimer) {
-      clearTimeout(debounceTimer);
-    }
-    
-    const timer = setTimeout(async () => {
-      try {
-        await updateFileContent(activeFileId, value);
-        setLastSavedContent(value);
+    try {
+      setSavingState('saving');
+      await updateFileContent(activeFileId, lastSavedContent);
+      setSavingState('saved');
       } catch (error) {
         console.error("Error saving file:", error);
         // Handle error (e.g., show toast)
       }
-    }, 1000);
-    
-    setDebounceTimer(timer);
   };
+    
+  // Add keyboard shortcut (Cmd+S or Ctrl+S)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault(); // Prevent the browser's save dialog
+        handleSave();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [lastSavedContent, activeFileId]);
 
   // Handle file selection from the tree view
   const handleFileSelect = (filePath: string) => {
-    console.log(filePath)
-    // Find the file in your fileTree by path
     setActiveFileId(fileMap[filePath].id);
   };
-
-  // Update last saved content when active file changes
-  useEffect(() => {
-    if (currentFile) {
-      setLastSavedContent(currentFile.content || "");
-    }
-  }, [currentFile?.id]);
 
   // Helper function to find a file by ID
   const findFileById = (id: number, nodes: FileNode[]): FileNode | undefined => {
@@ -163,11 +144,6 @@ export default function Home() {
     return undefined;
   };
 
-  // Run the code
-  const runCode = () => {
-    // Implementation for running code
-    console.log("Running code...");
-  };
 
   // Listen for messages from the iframe
   useEffect(() => {
@@ -236,75 +212,105 @@ export default function Home() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-background">
-      {/* Header */}
-      <header className="border-b py-2 px-4 flex items-center justify-between bg-card">
-        <div className="flex items-center space-x-2">
-          <Code className="h-5 w-5 text-primary" />
-          <h1 className="text-xl font-bold">AfterQuery Sandbox</h1>
-        </div>
-        <div className="flex space-x-2">
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button onClick={runCode} size="sm" variant="default">
-                  <Play className="h-4 w-4 mr-2" /> Run
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Run your code</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button size="sm" variant="secondary">
-                  <Save className="h-4 w-4 mr-2" /> Save
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Files are auto-saved</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button size="icon" variant="ghost">
-                  <Settings className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Settings</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-          <Button
-            variant="ghost"
-            disabled={userId}
-            onClick={() => {
-              router.push("/login");
-            }}
-          >
-            {userId ? <User className="h-4 w-4" /> : <div>Sign In</div>}
-          </Button>
-        </div>
-      </header>
-
+    <div className="flex flex-col h-screen bg-background overflow-hidden">
       <div className="flex flex-1 overflow-hidden">
-        <div className="flex h-screen">
+        {/* Sidebar - Remove fixed height to allow proper flex behavior */}
+        <div className="flex">
           <Sidebar userId={userId} onSelectChange={handleFileSelect} />
         </div>
 
-        {/* Main Content */}
-        <div className="flex-1 flex flex-col">
+        {/* Main Content - Add min-w-0 to prevent flex item from overflowing */}
+        <div className="flex-1 flex flex-col min-w-0">
           {/* File Header */}
           {currentFile ? (
             <>
+            
               {/* File Header */}
-              <div className="bg-muted/40 border-b flex items-center px-4 py-1.5">
-                <FileCode className="h-4 w-4 mr-2 text-muted-foreground" />
-                <span className="text-sm font-medium">{currentFile.name}</span>
-                {isLoading && (
-                  <div className="ml-2 animate-spin rounded-full h-3 w-3 border-b-2 border-primary"></div>
-                )}
+              <div className="bg-muted/40 border-b flex items-center px-6 py-2.5 justify-between min-w-0">
+                {/* Left side - File info */}
+                <div className="flex items-center space-x-3 min-w-0">
+                  <FileCode className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                  <div className="flex items-center space-x-4 min-w-0">
+                    <span className="text-sm font-medium text-foreground truncate">{currentFile.name}</span>
+                    <div className="h-4 w-px bg-border mx-1 flex-shrink-0"></div>
+                    <div className="flex items-center flex-shrink-0">
+                      {savingState === 'saving' && (
+                        <div className="flex items-center text-xs text-amber-500 bg-amber-50 px-2 py-0.5 rounded-full">
+                          <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-amber-500 mr-1.5"></div>
+                          <span>Saving...</span>
+                        </div>
+                      )}  
+                      {savingState === 'saved' && (
+                        <div className="flex items-center text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
+                          <svg className="h-3 w-3 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                          </svg>
+                          <span>Saved</span>
+                        </div>
+                      )}
+                      {savingState === 'unsaved' && (
+                        <div className="flex items-center text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
+                          <div className="h-2 w-2 rounded-full bg-amber-500 mr-1.5"></div>
+                          <span>Unsaved changes</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right side - Actions */}
+                <div className="flex items-center space-x-2">
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipContent side="bottom" className="text-xs">
+                        <p>Run your code (⌘+Enter)</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button 
+                          size="sm" 
+                          variant="secondary" 
+                          onClick={handleSave}
+                          className="space-x-1.5"
+                        >
+                          <Save className="h-3.5 w-3.5" />
+                          <span>Save</span>
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="text-xs">
+                        <p>Save changes (⌘+S)</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+
+                  <div className="h-6 w-px bg-border mx-1"></div>
+
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipContent side="bottom" className="text-xs">
+                        <p>Settings</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    disabled={!userId}
+                    onClick={() => router.push("/login")}
+                  >
+                    {userId ? (
+                      <User className="h-4 w-4" />
+                    ) : (
+                      <span className="text-sm">Sign In</span>
+                    )}
+                  </Button>
+                </div>
               </div>
             
               {/* Editor */}
@@ -315,41 +321,32 @@ export default function Home() {
           )}
 
           {/* Console Output */}
-          <Card className="rounded-none border-t border-l-0 border-r-0 border-b-0">
-            <Tabs defaultValue="terminal">
-              <TabsContent value="terminal">
-                <Card
-                  id="terminal-container"
-                  className="rounded-none border-t border-l-0 border-r-0 border-b-0 h-80"
-                >
+          <div className="border-t">
+            <Tabs defaultValue="terminal" className="h-full flex flex-col">
+              <TabsContent value="terminal" className="flex-1 min-h-0">
+                <div className="h-full">
                   <TerminalComponent userId={userId} apiBaseUrl={process.env.NEXT_PUBLIC_REACT_APP_API_URL} />
-                </Card>
+                </div>
               </TabsContent>
-              <TabsContent value="output">
-                <Card className="rounded-none border-t border-l-0 border-r-0 border-b-0">
-                  <CardContent className="p-0">
-                    <ScrollArea className="h-40 w-full">
-                      <div className="p-4">
-                        {consoleOutput.length === 0 ? (
-                          <p className="text-muted-foreground text-sm italic">
-                            No output yet. Run your code to see results here.
-                          </p>
-                        ) : (
-                          <div className="font-mono text-sm">
-                            {consoleOutput.map((output, i) => (
-                              <div key={i} className="py-1 border-b">
-                                {output}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </ScrollArea>
-                  </CardContent>
-                </Card>
+              <TabsContent value="output" className="flex-1 min-h-0">
+                <div className="h-full overflow-auto">
+                  {consoleOutput.length === 0 ? (
+                    <p className="text-muted-foreground text-sm italic p-4">
+                      No output yet. Run your code to see results here.
+                    </p>
+                  ) : (
+                    <div className="font-mono text-sm p-4">
+                      {consoleOutput.map((output, i) => (
+                        <div key={i} className="py-1 border-b">
+                          {output}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </TabsContent>
             </Tabs>
-          </Card>
+          </div>
         </div>
       </div>
     </div>

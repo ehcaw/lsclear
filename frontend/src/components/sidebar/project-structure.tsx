@@ -1,13 +1,9 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import {
-  Sidebar,
-  SidebarContent,
-  SidebarGroup,
   SidebarMenu,
   SidebarMenuItem,
   SidebarMenuButton,
   SidebarMenuSub,
-  SidebarMenuSubItem,
   SidebarProvider,
 } from "@/components/ui/sidebar";
 import {
@@ -15,8 +11,11 @@ import {
   FileIcon,
   ChevronRightIcon,
   ChevronDownIcon,
-} from "lucide-react"; // Assuming you use lucide icons
+  FileText,
+  FolderOpen,
+} from "lucide-react";
 import useFileStore from "@/lib/files-store";
+import { cn } from "@/lib/utils";
 
 interface FileNode {
   id: number;
@@ -35,15 +34,22 @@ interface ProjectStructureProps {
 }
 
 export function ProjectStructure({ data, onSelectChange }: ProjectStructureProps) {
-
   const { setFileMap } = useFileStore();
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
 
-  const toggleFolder = (id: number) => {
-    setExpandedFolders((prev) => ({
+  const toggleFolder = (id: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpandedFolders(prev => ({
       ...prev,
       [id]: !prev[id],
     }));
+  };
+
+  const handleFileClick = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelectedFile(id);
+    onSelectChange(id);
   };
 
   const buildFileMap = (nodes: FileNode[]): Record<string, FileNode> => {
@@ -52,56 +58,59 @@ export function ProjectStructure({ data, onSelectChange }: ProjectStructureProps
     const processNode = (node: FileNode, currentPath: string = '') => {
       const nodePath = currentPath ? `${currentPath}/${node.name}` : node.name;
       
-      // Only add files to the map, not directories
       if (!node.is_dir) {
         map[node.id] = node;
       }
       
-      // Process children if they exist
       if (node.children) {
         node.children.forEach(child => processNode(child, nodePath));
       }
     };
     
-    // Process the root nodes
     nodes.forEach(node => processNode(node));
     setFileMap(map);
     return map;
   };
 
-  // Only build file map once when component mounts or data changes
   useEffect(() => {
     buildFileMap(data);
   }, [data]);
 
-  const renderNode = (node: FileNode) => {
+  const renderNode = (node: FileNode, depth = 0) => {
     const isFolder = node.is_dir;
     const isExpanded = expandedFolders[node.id] || false;
+    const isSelected = selectedFile === String(node.id);
 
     if (isFolder) {
       return (
-        <SidebarMenuItem key={node.id}>
+        <SidebarMenuItem key={node.id} className="group">
           <SidebarMenuButton
-            onClick={() => toggleFolder(node.id)}
-            icon={
-              isExpanded ? (
-                <ChevronDownIcon className="h-4 w-4" />
-              ) : (
-                <ChevronRightIcon className="h-4 w-4" />
-              )
-            }
+            onClick={(e) => toggleFolder(node.id, e)}
+            className={cn(
+              "w-full flex items-center py-1.5 px-3 rounded-md text-sm transition-colors",
+              "hover:bg-gray-100 dark:hover:bg-gray-800",
+              isSelected && "bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
+            )}
+            style={{ paddingLeft: `${depth * 12 + 12}px` }}
           >
-            <FolderIcon className="h-4 w-4 mr-2" />
-            {node.name}
+            <div className="flex items-center flex-1 min-w-0">
+              {isExpanded ? (
+                <ChevronDownIcon className="h-3.5 w-3.5 mr-2 text-gray-500 dark:text-gray-400 flex-shrink-0" />
+              ) : (
+                <ChevronRightIcon className="h-3.5 w-3.5 mr-2 text-gray-500 dark:text-gray-400 flex-shrink-0" />
+              )}
+              {isExpanded ? (
+                <FolderOpen className="h-4 w-4 mr-2 text-blue-500 dark:text-blue-400 flex-shrink-0" />
+              ) : (
+                <FolderIcon className="h-4 w-4 mr-2 text-blue-500 dark:text-blue-400 flex-shrink-0" />
+              )}
+              <span className="truncate">{node.name}</span>
+            </div>
           </SidebarMenuButton>
 
           {isExpanded && node.children && (
-            <SidebarMenuSub>
-              {node.children.map((child) => (
-                <SidebarMenuSubItem key={child.id}>
-                  {renderNode(child)}
-                </SidebarMenuSubItem>
-              ))}
+            <SidebarMenuSub className="ml-1">
+              {node.children.map((child) => renderNode(child, depth + 1))}
             </SidebarMenuSub>
           )}
         </SidebarMenuItem>
@@ -111,28 +120,28 @@ export function ProjectStructure({ data, onSelectChange }: ProjectStructureProps
     return (
       <SidebarMenuItem key={node.id}>
         <SidebarMenuButton
-          onClick={() => onSelectChange(node.id.toString())}
-          icon={<FileIcon className="h-4 w-4" />}
+          onClick={(e) => handleFileClick(String(node.id), e)}
+          className={cn(
+            "w-full flex items-center py-1.5 px-3 rounded-md text-sm transition-colors",
+            "hover:bg-gray-100 dark:hover:bg-gray-800",
+            isSelected && "bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
+          )}
+          style={{ paddingLeft: `${depth * 12 + 36}px` }}
         >
-          {node.name}
+          <FileText className="h-3.5 w-3.5 mr-2 text-gray-500 dark:text-gray-400 flex-shrink-0" />
+          <span className="truncate">{node.name}</span>
         </SidebarMenuButton>
       </SidebarMenuItem>
     );
   };
 
   return (
-    <SidebarProvider>
-      <Sidebar>
-        <SidebarContent>
-          <SidebarGroup>
-            <SidebarMenu>
-              {data.map((node) => (
-                <div key={node.id}>{renderNode(node)}</div>
-              ))}
-            </SidebarMenu>
-          </SidebarGroup>
-        </SidebarContent>
-      </Sidebar>
-    </SidebarProvider>
+    <div className="text-sm text-gray-700 dark:text-gray-300">
+      <SidebarProvider>
+        <SidebarMenu>
+          {data.map((node) => renderNode(node))}
+        </SidebarMenu>
+      </SidebarProvider>
+    </div>
   );
 }

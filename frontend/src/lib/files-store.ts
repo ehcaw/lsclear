@@ -65,19 +65,15 @@ const useFileStore = create<FileStore>((set, get) => ({
   },
 
   loadFileTree: async () => {
-    console.log("Loading file tree from API...");
     const { userId } = get();
 
     try {
       set({ isLoading: true, error: null });
 
       if (!userId) {
-        console.log("No user ID found, using default files");
         get().initWithDefaults();
         return;
       }
-
-      console.log("Loading file tree for user:", userId);
 
       const response = await fetch(`/api/files/tree?userId=${userId}`);
 
@@ -247,12 +243,12 @@ const useFileStore = create<FileStore>((set, get) => ({
     const { userId } = get();
     if (!userId) throw new Error("User not authenticated");
     
-    const response = await fetch(`/api/files/${id}`, {
-      method: 'PUT',
+    const response = await fetch(`/api/files/${id}`, { 
+     method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content, userId })
     });
-    
+
     if (!response.ok) {
       throw new Error(`Failed to update file: ${response.statusText}`);
     }
@@ -359,6 +355,31 @@ function findFirstFile(nodes: FileNode[]): FileNode | undefined {
     }
   }
   return undefined;
+}
+
+export function getFullPath(fileId: number, fileMap: Record<number, FileNode>): string { 
+  const segments: string[] = [];
+  let current = fileMap[fileId];
+
+  if (!current) {
+    throw new Error(`File with ID ${fileId} not found`);
+  }
+
+  // Walk up until root (parentId === null)
+  while (current) {
+    segments.unshift(current.name);
+    if (current.parent_id === null) break;
+    const parent = fileMap[current.parent_id];
+    if (!parent) {
+      throw new Error(
+        `Parent with ID ${current.parent_id} not found for file ${current.id}`
+      );
+    }
+    current = parent;
+  }
+
+  // Prepend slash for absolute path
+  return "/" + segments.join("/");
 }
 
 export default useFileStore;

@@ -21,6 +21,103 @@ const TerminalIframe: React.FC<TerminalIframeProps> = ({
 
   const ws = useRef<WebSocket | null>(null);
 
+  const initializeTerminal = async () => {
+    try {
+      if (!userId) {
+        throw new Error("User ID is required");
+      }
+
+      setStatus("Connecting...");
+      console.log(`Starting terminal session for user: ${userId}`);
+
+      // Start terminal session
+      const response = await fetch(`${apiBaseUrl}/terminal/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error("Failed to start terminal:", errorData);
+        throw new Error(errorData.detail || "Failed to start terminal");
+      }
+
+      const data = await response.json();
+      const sid = data.session_id;
+
+      // Create WebSocket connection
+      let wsUrl: string;
+
+      if (apiBaseUrl.startsWith("http")) {
+        wsUrl = apiBaseUrl.replace(/^http/, "ws");
+      } else {
+        const protocol =
+          window.location.protocol === "https:" ? "wss:" : "ws:";
+        const host = window.location.host;
+        wsUrl = `${protocol}//${host}${apiBaseUrl}`;
+      }
+
+      // Ensure we have proper WebSocket URL
+      wsUrl = `${wsUrl.replace(/\/$/, "")}/terminal/ws/${sid}`;
+      console.log(wsUrl);
+
+      console.log("Creating WebSocket with URL:", wsUrl);
+
+      try {
+        ws.current = new WebSocket(wsUrl);
+        // Set binary type to arraybuffer for better binary data handling
+        ws.current.binaryType = "arraybuffer";
+
+        // Add event listeners for debugging
+        ws.current!.onopen = () => {
+          setStatus("Connected");
+          terminal.current!.focus();
+        
+          // tell the backend our size…
+          const { rows, cols } = fitAddon.current!.proposeDimensions()!;
+          ws.current!.send(JSON.stringify({ type: "resize", rows, cols }));
+        
+          // hook up xterm ↔ websocket (this wires both onData and onmessage)
+          terminal.current!.loadAddon(new AttachAddon(ws.current!));
+        };
+
+        ws.current.onerror = (error) => {
+          console.error("WebSocket error:", error);
+          console.error("WebSocket readyState:", ws.current?.readyState);
+          setError("WebSocket connection error");
+          setStatus("Error");
+        };
+
+        ws.current.onclose = (event) => {
+          console.log("WebSocket closed:", {
+            code: event.code,
+            reason: event.reason,
+            wasClean: event.wasClean,
+          });
+          setStatus("Disconnected");
+
+          if (event.code !== 1000) {
+            setError(
+              `Connection closed: ${event.reason || "Unknown reason"}`,
+            );
+          }
+        };
+      } catch (err) {
+        console.error("Failed to create WebSocket:", err);
+        setError("Failed to create WebSocket connection");
+        setStatus("Error");
+        return;
+      }
+    } catch (err) {
+      console.error("Terminal initialization error:", err);
+      setError(
+        err instanceof Error ? err.message : "Failed to initialize terminal",
+      );
+    }
+  };
+  
+
   // Re-initialize terminal when userId changes
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -45,103 +142,8 @@ const TerminalIframe: React.FC<TerminalIframeProps> = ({
     terminal.current.open(terminalRef.current);
     fitAddon.current.fit();
 
-    const initializeTerminal = async () => {
-      try {
-        if (!userId) {
-          throw new Error("User ID is required");
-        }
-
-        setStatus("Connecting...");
-        console.log(`Starting terminal session for user: ${userId}`);
-
-        // Start terminal session
-        const response = await fetch(`${apiBaseUrl}/terminal/start`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ user_id: userId }),
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          console.error("Failed to start terminal:", errorData);
-          throw new Error(errorData.detail || "Failed to start terminal");
-        }
-
-        const data = await response.json();
-        const sid = data.session_id;
-
-        // Create WebSocket connection
-        let wsUrl: string;
-
-        if (apiBaseUrl.startsWith("http")) {
-          wsUrl = apiBaseUrl.replace(/^http/, "ws");
-        } else {
-          const protocol =
-            window.location.protocol === "https:" ? "wss:" : "ws:";
-          const host = window.location.host;
-          wsUrl = `${protocol}//${host}${apiBaseUrl}`;
-        }
-
-        // Ensure we have proper WebSocket URL
-        wsUrl = `${wsUrl.replace(/\/$/, "")}/terminal/ws/${sid}`;
-        console.log(wsUrl);
-
-        console.log("Creating WebSocket with URL:", wsUrl);
-
-        try {
-          ws.current = new WebSocket(wsUrl);
-          // Set binary type to arraybuffer for better binary data handling
-          ws.current.binaryType = "arraybuffer";
-
-          // Add event listeners for debugging
-          ws.current!.onopen = () => {
-            setStatus("Connected");
-            terminal.current!.focus();
-          
-            // tell the backend our size…
-            const { rows, cols } = fitAddon.current!.proposeDimensions()!;
-            ws.current!.send(JSON.stringify({ type: "resize", rows, cols }));
-          
-            // hook up xterm ↔ websocket (this wires both onData and onmessage)
-            terminal.current!.loadAddon(new AttachAddon(ws.current!));
-          };
-
-          ws.current.onerror = (error) => {
-            console.error("WebSocket error:", error);
-            console.error("WebSocket readyState:", ws.current?.readyState);
-            setError("WebSocket connection error");
-            setStatus("Error");
-          };
-
-          ws.current.onclose = (event) => {
-            console.log("WebSocket closed:", {
-              code: event.code,
-              reason: event.reason,
-              wasClean: event.wasClean,
-            });
-            setStatus("Disconnected");
-
-            if (event.code !== 1000) {
-              setError(
-                `Connection closed: ${event.reason || "Unknown reason"}`,
-              );
-            }
-          };
-        } catch (err) {
-          console.error("Failed to create WebSocket:", err);
-          setError("Failed to create WebSocket connection");
-          setStatus("Error");
-          return;
-        }
-      } catch (err) {
-        console.error("Terminal initialization error:", err);
-        setError(
-          err instanceof Error ? err.message : "Failed to initialize terminal",
-        );
-      }
-    };
-
     initializeTerminal();
+
 
     // Cleanup on unmount or when userId changes
     return () => {
@@ -218,6 +220,13 @@ const TerminalIframe: React.FC<TerminalIframeProps> = ({
     return () => window.removeEventListener("resize", debounced);
   }, []);
 
+  const refreshWs = () => { 
+    if (ws.current) {
+      ws.current.close(1000, 'Manual Refresh')
+    }
+    initializeTerminal();
+  }
+
   // Simple debounce function
   function debounce<T extends (...args: any[]) => void>(
     func: T,
@@ -249,8 +258,18 @@ const TerminalIframe: React.FC<TerminalIframeProps> = ({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="bg-gray-800 text-white p-2 text-sm">
-        Terminal {status && `(${status})`}
+      <div className="bg-gray-800 text-white p-2 text-sm flex justify-between items-center">
+        <span>Terminal {status && `(${status})`}</span>
+        <button
+          onClick={refreshWs}
+          className="text-gray-300 hover:text-white p-1 rounded hover:bg-gray-700 transition-colors"
+          title="Restart terminal session"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+
+        </button>
       </div>
       <div ref={terminalRef} className="h-full w-full bg-black" />
     </div>

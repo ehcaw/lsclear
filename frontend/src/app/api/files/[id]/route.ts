@@ -27,7 +27,7 @@ export async function PATCH(
     }
 
     await pool.query(
-      `UPDATE files
+      `UPDATE fs_nodes
        SET content = $1, updated_at = $2
        WHERE id = $3 AND user_id = $4`,
       [content, new Date().toISOString(), id, userId],
@@ -60,7 +60,7 @@ export async function DELETE(
       );
     }
 
-    await pool.query(`DELETE FROM files WHERE id = $1 AND user_id = $2`, [
+    await pool.query(`DELETE FROM fs_nodes WHERE id = $1 AND user_id = $2`, [
       id,
       userId,
     ]);
