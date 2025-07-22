@@ -7,7 +7,6 @@ import io
 import os
 from user_file_system import FileSystemManager
 from postgres import NeonDB
-from file_watcher import start_user_watcher
 from pydantic import BaseModel
 import shlex
 from db_update_manager import ws_manager, notify_file_update
@@ -31,8 +30,6 @@ app.add_middleware(
 
 neon_db = NeonDB()
 
-# In-memory storage for session -> container mapping
-# In production, you'd use a proper database
 session_containers = {}
 user_containers = {}  # Maps user_id to container_id
 
@@ -366,25 +363,28 @@ async def fs_event(evt: FSEvent):
         elif action == "rm":
             path = _abs(args[0])
             rel_path = os.path.relpath(path, "/workspace")
-            
-            # Find the node in the database
             cursor = fsm.db.conn.cursor()
-            cursor.execute(
-                """
-                WITH RECURSIVE nodes_to_delete AS (
-                    SELECT id, is_dir FROM fs_nodes 
-                    WHERE user_id = %s AND name = %s AND parent_id IS NULL
+            # Find the node in the database
+            cursor.execute("""
+                WITH RECURSIVE node_tree AS (
+                    -- Start with the target node
+                    SELECT id, parent_id, name, is_dir
+                    FROM fs_nodes 
+                    WHERE user_id = %s 
+                    AND name = %s
+                    AND parent_id IS NULL
+                    AND %s = name
                     
                     UNION ALL
                     
-                    SELECT f.id, f.is_dir FROM fs_nodes f
-                    JOIN nodes_to_delete n ON f.parent_id = n.id
-                    WHERE f.user_id = %s
+                    -- Recursively find all children
+                    SELECT n.id, n.parent_id, n.name, n.is_dir
+                    FROM fs_nodes n
+                    JOIN node_tree nt ON n.parent_id = nt.id
+                    WHERE n.user_id = %s
                 )
-                SELECT id, is_dir FROM nodes_to_delete
-                """,
-                (evt.user_id, rel_path, evt.user_id)
-            )
+                SELECT id, is_dir FROM node_tree
+            """, (evt.user_id, rel_path, rel_path, evt.user_id))
             
             nodes_to_delete = cursor.fetchall()
             
@@ -837,3 +837,40 @@ async def db_update_websocket(websocket: WebSocket, user_id: str):
     except Exception as e:
         print(f"WebSocket error: {e}")
         ws_manager.disconnect(user_id, websocket)
+
+@app.post("/run")
+async def run(user_data: dict):
+    user_id = user_data.get('user_id')
+    file_path = user_data.get('file_path')  # Full path from frontend
+    working_dir = user_data.get('working_dir', '/workspace')  # Default to /workspace if not provided
+    
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id is required")
+    
+    try: 
+        container_id = containers[user_id]
+        container = client.containers.get(container_id)
+        
+        # Get the directory of the file being executed
+        file_dir = os.path.dirname(file_path) if file_path else working_dir
+        filename = os.path.basename(file_path) if file_path else 'main.py'
+        
+        # Execute the command in the file's directory
+        cmd = f"cd {file_dir} && python3 {filename}"
+        exit_code, output = container.exec_run(
+            cmd,
+            workdir=file_dir,  # Set working directory
+            tty=True
+        )
+        
+        return {
+            "exit_code": exit_code,
+            "output": output.decode('utf-8') if output else ""
+        }
+        
+    except KeyError:
+        raise HTTPException(status_code=404, detail="User container not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+        
+    

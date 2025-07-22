@@ -15,8 +15,7 @@ RUN apt-get update -y && \
 # Popular Python/data libs (optional—drop any you don’t need)
 RUN pip install --no-cache-dir \
         ipykernel jupyterlab \
-        pandas numpy scipy matplotlib \
-        fastapi uvicorn[standard]
+        pandas numpy scipy matplotlib 
 
 WORKDIR /workspace
 VOLUME ["/workspace"]
