@@ -1,5 +1,4 @@
 # In postgres.py
-from datetime import datetime
 import psycopg2
 from typing import Dict, List, Optional
 from dotenv import load_dotenv

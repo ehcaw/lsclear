@@ -3,7 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone
 import docker
 import uuid, asyncio, json, traceback
-import io
 import os
 from user_file_system import FileSystemManager
 from postgres import NeonDB
