@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   SidebarMenu,
   SidebarMenuItem,
@@ -52,7 +52,7 @@ export function ProjectStructure({ data, onSelectChange }: ProjectStructureProps
     onSelectChange(id);
   };
 
-  const buildFileMap = (nodes: FileNode[]): Record<string, FileNode> => {
+  const buildFileMap = useCallback((nodes: FileNode[]): Record<string, FileNode> => {
     const map: Record<string, FileNode> = {};
     
     const processNode = (node: FileNode, currentPath: string = '') => {
@@ -70,11 +70,11 @@ export function ProjectStructure({ data, onSelectChange }: ProjectStructureProps
     nodes.forEach(node => processNode(node));
     setFileMap(map);
     return map;
-  };
+  }, [setFileMap]);
 
-  useEffect(() => {
+useEffect(() => {
     buildFileMap(data);
-  }, [data]);
+  }, [data, buildFileMap]);
 
   const renderNode = (node: FileNode, depth = 0) => {
     const isFolder = node.is_dir;

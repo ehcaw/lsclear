@@ -55,7 +55,7 @@ const MonacoEditor: React.FC<MonacoEditorProps> = ({
     return () => {
       monacoEditorRef.current?.dispose();
     };
-  }, []);
+  }, [language, onChange, options, theme, value]);
   useEffect(() => {
     if (
       monacoEditorRef.current &&

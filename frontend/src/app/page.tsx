@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import dynamic from 'next/dynamic';
 
 // Import the dynamic editor component
@@ -91,7 +91,7 @@ export default function Home() {
     }
     getUser();
     setIsLoading(false);
-  }, [router]);
+  }, [router, setUserId]);
 
   // Handle file content change - just update local state
   const handleEditorChange = (value: string | undefined) => {
@@ -101,7 +101,7 @@ export default function Home() {
   };
 
   // Handle save button click
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     if (!activeFileId || !lastSavedContent) return;
     
     try {
@@ -112,7 +112,7 @@ export default function Home() {
         console.error("Error saving file:", error);
         // Handle error (e.g., show toast)
       }
-  };
+  }, [activeFileId, lastSavedContent, setSavingState, updateFileContent]);
     
   // Add keyboard shortcut (Cmd+S or Ctrl+S)
   useEffect(() => {
@@ -125,7 +125,7 @@ export default function Home() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [lastSavedContent, activeFileId]);
+  }, [lastSavedContent, activeFileId, handleSave]);
 
   // Handle file selection from the tree view
   const handleFileSelect = (filePath: string) => {

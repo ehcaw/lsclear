@@ -177,26 +177,11 @@ const useFileStore = create<FileStore>((set, get) => ({
     await get().loadFileTree();
   },
 
-  addFile: async (fileData) => {
+  addFile: async (fileData: FileNode) => {
     const { userId } = get();
 
     try {
       set({ isLoading: true, error: null });
-
-      if (!userId) {
-        const newFile = {
-          id: Date.now().toString(),
-          ...fileData,
-          created_at: new Date().toISOString(),
-        };
-
-        set((state) => ({
-          files: [newFile, ...state.files],
-          activeFileId: newFile.id,
-          isLoading: false,
-        }));
-        return;
-      }
 
       // Use fetch to call a server API endpoint
       const response = await fetch("/api/files", {
@@ -217,25 +202,12 @@ const useFileStore = create<FileStore>((set, get) => ({
       const data = await response.json();
       console.log(data);
       const newFile = data.file;
-
-      set((state) => ({
-        files: [newFile, ...state.files],
-        activeFileId: newFile.id,
-        isLoading: false,
-      }));
+      await get().loadFileTree();
+      return newFile;
     } catch (error) {
       console.error("Error adding file:", error);
-      const fallbackFile = {
-        id: Date.now().toString(),
-        ...fileData,
-        created_at: new Date().toISOString(),
-      };
-
-      set((state) => ({
-        files: [fallbackFile, ...state.files],
-        activeFileId: fallbackFile.id,
-        isLoading: false,
-      }));
+      set({ isLoading: false });
+      throw error;
     }
   },
 
@@ -271,47 +243,17 @@ const useFileStore = create<FileStore>((set, get) => ({
     }));
   },
 
-  deleteFile: async (id) => {
+  deleteFile: async (id: number) => {
     const { userId } = get();
 
     try {
       set({ isLoading: true, error: null });
 
-      if (!userId) {
-        set((state) => {
-          const updatedFiles = state.files.filter((file) => file.id !== id);
-          return {
-            files: updatedFiles,
-            activeFileId:
-              state.activeFileId === id
-                ? updatedFiles.length > 0
-                  ? updatedFiles[0].id
-                  : null
-                : state.activeFileId,
-            isLoading: false,
-          };
-        });
-        return;
-      }
-
       // Use fetch to call a server API endpoint
       await fetch(`/api/files/${id}?userId=${userId}`, {
         method: "DELETE",
       });
-
-      set((state) => {
-        const updatedFiles = state.files.filter((file) => file.id !== id);
-        return {
-          files: updatedFiles,
-          activeFileId:
-            state.activeFileId === id
-              ? updatedFiles.length > 0
-                ? updatedFiles[0].id
-                : null
-              : state.activeFileId,
-          isLoading: false,
-        };
-      });
+      await get().loadFileTree();
     } catch (error) {
       console.error("Error deleting file:", error);
       set({ isLoading: false });

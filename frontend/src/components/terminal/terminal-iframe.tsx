@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import { AttachAddon } from "xterm-addon-attach";
@@ -21,7 +21,7 @@ const TerminalIframe: React.FC<TerminalIframeProps> = ({
 
   const ws = useRef<WebSocket | null>(null);
 
-  const initializeTerminal = async () => {
+  const initializeTerminal = useCallback(async () => {
     try {
       if (!userId) {
         throw new Error("User ID is required");
@@ -115,7 +115,7 @@ const TerminalIframe: React.FC<TerminalIframeProps> = ({
         err instanceof Error ? err.message : "Failed to initialize terminal",
       );
     }
-  };
+  }, [apiBaseUrl, userId]); 
   
 
   // Re-initialize terminal when userId changes
@@ -201,7 +201,7 @@ const TerminalIframe: React.FC<TerminalIframeProps> = ({
 
       cleanupContainer();
     };
-  }, [apiBaseUrl, userId]);
+  }, [apiBaseUrl, userId, initializeTerminal]);
 
   // Handle window resize
   useEffect(() => {
