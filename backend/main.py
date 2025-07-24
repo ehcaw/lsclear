@@ -27,7 +27,7 @@ client = docker.from_env()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://lsclear.vercel.app", "http://localhost:3000"],
+    allow_origins=["https://lsclear.vercel.app", "http://localhost:3000", "https://documix.xyz"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

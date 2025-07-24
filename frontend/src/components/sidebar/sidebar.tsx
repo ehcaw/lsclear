@@ -45,7 +45,12 @@ export function Sidebar({ userId, onSelectChange, className }: SidebarProps) {
     (key, { next }) => {
       if (!userId) return () => {};
 
-      const ws = new WebSocket(`ws://localhost:8000${key}`);
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsBaseUrl = process.env.NODE_ENV === 'production' 
+        ? 'wss://ws.documix.xyz'  // Replace with your actual WebSocket subdomain
+        : `${wsProtocol}//${window.location.hostname}:8000`;
+      
+      const ws = new WebSocket(`${wsBaseUrl}${key}`);
 
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
