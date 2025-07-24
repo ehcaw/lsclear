@@ -55,7 +55,7 @@ export default function Home() {
     setActiveFileId,
     loadFileTree,
     updateFileContent,
-  activeFile,
+    activeFile,
     userId,
     setUserId,
     error,
@@ -128,9 +128,12 @@ export default function Home() {
   }, [lastSavedContent, activeFileId, handleSave]);
 
   // Handle file selection from the tree view
-  const handleFileSelect = (filePath: string) => {
-    setActiveFileId(fileMap[filePath].id);
-  };
+  const handleFileSelect = useCallback((filePath: string) => {
+    const file = fileMap[filePath];
+    if (file) {
+      setActiveFileId(file.id);
+    }
+  }, [fileMap, setActiveFileId]);
 
   // Helper function to find a file by ID
   const findFileById = (id: number, nodes: FileNode[]): FileNode | undefined => {
@@ -158,17 +161,19 @@ export default function Home() {
   }, []);
 
   const renderEditor = () => {
-    if (!currentFile) {
+    console.log("activeFileId", activeFileId);
+    console.log("currentFile", currentFile);
+    if (!activeFileId && !currentFile) {
       return <EditorPlaceholder />;
     }
-
+    
     const language = "python";
-    const content = currentFile.content || '';
+    const content = currentFile?.content || '';
 
     return (
       <div className="h-full w-full">
         <MonacoEditor
-          key={currentFile.id}
+          key={currentFile?.id}
           language={language}
           value={content}
           onChange={handleEditorChange}

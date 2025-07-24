@@ -46,11 +46,11 @@ export function ProjectStructure({ data, onSelectChange }: ProjectStructureProps
     }));
   };
 
-  const handleFileClick = (id: string, e: React.MouseEvent) => {
+  const handleFileClick = useCallback((id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setSelectedFile(id);
-    onSelectChange(id);
-  };
+    onSelectChange(id); // This should call setActiveFileId in the parent
+  }, [onSelectChange]);
 
   const buildFileMap = useCallback((nodes: FileNode[]): Record<string, FileNode> => {
     const map: Record<string, FileNode> = {};

@@ -1,57 +1,14 @@
 import { NextResponse } from "next/server";
-import { Pool } from "pg";
+import { neon } from '@neondatabase/serverless';
 
-// Create a connection pool to the Neon database - this runs server-side only
-const pool = new Pool({
-  connectionString: process.env.PGCONNECTIONSTRING,
-  ssl: {
-    rejectUnauthorized: false,
-  },
-});
+const sql = neon(process.env.PGCONNECTIONSTRING!);
 
-// PATCH /api/files/[id]
-export async function PATCH(
-  request: Request,
-  { params }: { params: { id: string } },
-) {
+export const runtime = 'edge';
+
+export async function GET(request: Request) {
   try {
-    const id = params.id;
-    const body = await request.json();
-    const { content, userId } = body;
-
-    if (!content || !userId) {
-      return NextResponse.json(
-        { error: "Missing required fields" },
-        { status: 400 },
-      );
-    }
-
-    await pool.query(
-      `UPDATE fs_nodes
-       SET content = $1, updated_at = $2
-       WHERE id = $3 AND user_id = $4`,
-      [content, new Date().toISOString(), id, userId],
-    );
-
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error("Error updating file:", error);
-    return NextResponse.json(
-      { error: "Failed to update file" },
-      { status: 500 },
-    );
-  }
-}
-
-// DELETE /api/files/[id]?userId=123
-export async function DELETE(
-  request: Request,
-  { params }: { params: { id: string } },
-) {
-  try {
-    const id = params.id;
     const { searchParams } = new URL(request.url);
-    const userId = searchParams.get("userId");
+    const userId = searchParams.get("user_id");
 
     if (!userId) {
       return NextResponse.json(
@@ -60,16 +17,44 @@ export async function DELETE(
       );
     }
 
-    await pool.query(`DELETE FROM fs_nodes WHERE id = $1 AND user_id = $2`, [
-      id,
-      userId,
-    ]);
+    const data = await sql`
+      SELECT structure 
+      FROM file_structures
+      WHERE user_id = ${userId}
+    `;
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ data });
   } catch (error) {
-    console.error("Error deleting file:", error);
+    console.error("Server error:", error);
     return NextResponse.json(
-      { error: "Failed to delete file" },
+      { error: "Internal server error" },
+      { status: 500 },
+    );
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const { user_id, name, structure } = await request.json();
+
+    if (!user_id || !name || !structure) {
+      return NextResponse.json(
+        { error: "Missing required fields: user_id, name, and structure are required" },
+        { status: 400 },
+      );
+    }
+
+    const data = await sql`
+      INSERT INTO file_structures (user_id, name, structure, created_at)
+      VALUES (${user_id}, ${name}, ${structure}, ${new Date().toISOString()})
+      RETURNING *
+    `;
+
+    return NextResponse.json({ data }, { status: 201 });
+  } catch (error) {
+    console.error("Server error:", error);
+    return NextResponse.json(
+      { error: "Internal server error" },
       { status: 500 },
     );
   }

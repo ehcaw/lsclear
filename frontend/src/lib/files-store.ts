@@ -25,11 +25,7 @@ interface FileStore {
   setFileMap: (fileMap: Record<string, FileNode>) => void;
   
   // File operations
-  createFile: (name: string, parentId?: number | null) => Promise<FileNode>;
-  createDirectory: (name: string, parentId?: number | null) => Promise<FileNode>;
   updateFileContent: (id: number, content: string) => Promise<void>;
-  renameNode: (id: number, newName: string) => Promise<void>;
-  deleteNode: (id: number) => Promise<void>;
   
   // Navigation
   setActiveFileId: (id: number | null) => void;
@@ -136,126 +132,55 @@ const useFileStore = create<FileStore>((set, get) => ({
     return newDir;
   },
   
-  renameNode: async (id: number, newName: string) => {
-    const { userId } = get();
-    if (!userId) throw new Error("User not authenticated");
-    
-    const response = await fetch(`/api/files/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: newName })
-    });
-    
-    if (!response.ok) {
-      throw new Error(`Failed to rename: ${response.statusText}`);
-    }
-    
-    await get().loadFileTree();
-  },
-  
-  deleteNode: async (id: number) => {
-    const { userId } = get();
-    if (!userId) throw new Error("User not authenticated");
-    
-    const response = await fetch(`/api/files/${id}`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId })
-    });
-    
-    if (!response.ok) {
-      throw new Error(`Failed to delete: ${response.statusText}`);
-    }
-    
-    const { fileTree, activeFileId } = get();
-    if (activeFileId === id) {
-      // If we're deleting the active file, find another file to activate
-      const firstFile = findFirstFile(fileTree);
-      set({ activeFileId: firstFile?.id || null });
-    }
-    
-    await get().loadFileTree();
-  },
-
-  addFile: async (fileData: FileNode) => {
-    const { userId } = get();
-
-    try {
-      set({ isLoading: true, error: null });
-
-      // Use fetch to call a server API endpoint
-      const response = await fetch("/api/files", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          ...fileData,
-          userId,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      console.log(data);
-      const newFile = data.file;
-      await get().loadFileTree();
-      return newFile;
-    } catch (error) {
-      console.error("Error adding file:", error);
-      set({ isLoading: false });
-      throw error;
-    }
-  },
 
   updateFileContent: async (id, content) => {
     const { userId } = get();
-    if (!userId) throw new Error("User not authenticated");
-    
-    const response = await fetch(`/api/files/${id}`, { 
-     method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content, userId })
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to update file: ${response.statusText}`);
-    }
-    
-    // Update the local state optimistically
-    const updateNodeContent = (nodes: FileNode[]): FileNode[] => {
-      return nodes.map(node => {
-        if (node.id === id && !node.is_dir) {
-          return { ...node, content, updated_at: new Date().toISOString() };
-        }
-        if (node.children) {
-          return { ...node, children: updateNodeContent(node.children) };
-        }
-        return node;
-      });
-    };
-    
-    set(state => ({
-      fileTree: updateNodeContent(state.fileTree)
-    }));
-  },
-
-  deleteFile: async (id: number) => {
-    const { userId } = get();
-
+    if (!userId) return;
+  
     try {
       set({ isLoading: true, error: null });
-
-      // Use fetch to call a server API endpoint
-      await fetch(`/api/files/${id}?userId=${userId}`, {
-        method: "DELETE",
+  
+      const response = await fetch(`/api/files/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content, userId })
       });
-      await get().loadFileTree();
+  
+      if (!response.ok) {
+        throw new Error('Failed to update file');
+      }
+  
+      // Update the local state
+      set(state => {
+        const updateNode = (nodes: FileNode[]): FileNode[] => {
+          return nodes.map(node => {
+            if (node.id === id) {
+              return { ...node, content, updated_at: new Date().toISOString() };
+            }
+            if (node.children) {
+              return { ...node, children: updateNode(node.children) };
+            }
+            return node;
+          });
+        };
+  
+        return {
+          fileTree: updateNode(state.fileTree),
+          fileMap: {
+            ...state.fileMap,
+            [id]: {
+              ...state.fileMap[id],
+              content,
+              updated_at: new Date().toISOString()
+            }
+          }
+        };
+      });
+  
     } catch (error) {
-      console.error("Error deleting file:", error);
+      console.error('Error updating file:', error);
+      set({ error: 'Failed to update file' });
+    } finally {
       set({ isLoading: false });
     }
   },

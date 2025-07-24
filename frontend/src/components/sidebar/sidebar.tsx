@@ -33,6 +33,8 @@ export function Sidebar({ userId, onSelectChange, className }: SidebarProps) {
       revalidateOnReconnect: true,
       shouldRetryOnError: true,
       errorRetryCount: 3,
+      revalidateOnMount: true,
+      refreshInterval: 0,
     }
   );
 
