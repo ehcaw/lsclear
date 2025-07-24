@@ -152,10 +152,21 @@ def get_or_create_container(user_id: str):
         
         # Wait a moment for the container to start
         import time
-        time.sleep(2)
-        
-        # Verify the container is running
-        container.reload()
+        for attempt in range(max_attempts):
+            container.reload()
+            if container.status == "running":
+                # Verify container is actually responsive
+                try:
+                    exit_code, output = container.exec_run("echo test", tty=True)
+                    if exit_code == 0:
+                        print(f"Container {container.id} is now running and responsive")
+                        break
+                    else:
+                        print(f"Container {container.id} is running but not responsive (attempt {attempt + 1}/{max_attempts})")
+                except Exception as e:
+                    print(f"Error checking container responsiveness: {e}")
+            else:
+                print(f"Container {container.id} status: {container.status} (attempt {attempt + 1}/{max_attempts})")
         if container.status != 'running':
             raise Exception(f"Container failed to start. Status: {container.status}")
             
