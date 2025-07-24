@@ -870,31 +870,41 @@ async def terminal_ws(ws: WebSocket, sid: str):
 
 @app.websocket("/db_update/ws/{user_id}")
 async def db_update_websocket(websocket: WebSocket, user_id: str):
-    # Accept the WebSocket connection
-    await websocket.accept()
-    
+    """WebSocket endpoint for database updates"""
     try:
-        # Register the connection with the manager
-        await ws_manager.connect(user_id, websocket)
-        print(f"WebSocket connection established for user {user_id}")
+        # Accept the WebSocket connection first
+        await websocket.accept()
+        print(f"WebSocket connection accepted for user {user_id}")
+        
+        # Connect to the WebSocket manager
+        try:
+            await ws_manager.connect(user_id, websocket)
+            print(f"WebSocket connection registered for user {user_id}")
+        except Exception as e:
+            print(f"Error registering WebSocket connection: {e}")
+            await websocket.close(code=1008, reason="Internal server error")
+            return
         
         # Keep the connection alive
         while True:
             try:
                 # Wait for a message (or timeout)
                 data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
-                # If we get a message, respond with a pong
+                # Handle ping/pong for keepalive
                 if data == "ping":
                     await websocket.send_text("pong")
+                
             except asyncio.TimeoutError:
-                # Send a ping to keep the connection alive
+                # Send ping to keep connection alive
                 try:
-                    await websocket.send_json({"type": "ping"})
+                    await websocket.send_text("ping")
                 except:
-                    break  # Connection lost
+                    break
+                    
             except WebSocketDisconnect:
                 print(f"Client {user_id} disconnected")
                 break
+                
             except Exception as e:
                 print(f"WebSocket error for user {user_id}: {e}")
                 break

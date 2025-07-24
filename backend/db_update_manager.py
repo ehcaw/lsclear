@@ -9,6 +9,9 @@ class DBUpdateManager:
 
     async def connect(self, user_id: str, websocket: WebSocket):
         """Register a new WebSocket connection for a user"""
+        if not isinstance(websocket, WebSocket):
+            raise ValueError("websocket parameter must be a WebSocket instance")
+            
         if user_id not in self.active_connections:
             self.active_connections[user_id] = set()
         self.active_connections[user_id].add(websocket)
