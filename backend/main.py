@@ -81,16 +81,37 @@ def get_or_create_container(user_id: str):
                 print(f"Container {container.id} is {container.status}, attempting to start...")
                 try:
                     container.start()
-                    # Verify the container is actually running
-                    for _ in range(10):
+                    # Wait longer for container to start and verify it's actually running
+                    max_attempts = 30  # Increased from 10 to 30 seconds
+                    for attempt in range(max_attempts):
                         container.reload()
                         if container.status == "running":
-                            break
+                            # Verify container is actually responsive
+                            try:
+                                exit_code, output = container.exec_run("echo test", tty=True)
+                                if exit_code == 0:
+                                    print(f"Container {container.id} is now running and responsive")
+                                    break
+                                else:
+                                    print(f"Container {container.id} is running but not responsive (attempt {attempt + 1}/{max_attempts})")
+                            except Exception as e:
+                                print(f"Error checking container responsiveness: {e}")
+                        else:
+                            print(f"Container {container.id} status: {container.status} (attempt {attempt + 1}/{max_attempts})")
+                        
+                        # If container exited, check logs
+                        if container.status == "exited":
+                            logs = container.logs().decode('utf-8')
+                            print(f"Container {container.id} exited with logs:\n{logs}")
+                            raise Exception(f"Container exited with status: {container.status}")
+                            
                         time.sleep(1)
-                    if container.status != 'running':
-                        print(f"Failed to start container {container.id}, removing and creating new one...")
+                    else:
+                        # If we get here, container didn't start in time
+                        logs = container.logs().decode('utf-8')
+                        print(f"Container {container.id} failed to start. Logs:\n{logs}")
                         container.remove(force=True)
-                        raise docker.errors.NotFound("Container failed to start")
+                        raise Exception(f"Container failed to start within {max_attempts} seconds")
                 except Exception as e:
                     print(f"Error starting container {container.id}: {e}")
                     container.remove(force=True)
