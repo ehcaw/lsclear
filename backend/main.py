@@ -754,7 +754,7 @@ async def terminal_ws(ws: WebSocket, sid: str):
     """
     WebSocket proxy to the running container's bash
     """
-
+    await ws.accept()
     if not sid:
         print("Error: session_id query parameter is required")
         await ws.close(code=1008, reason="session_id query parameter is required")
@@ -783,7 +783,7 @@ async def terminal_ws(ws: WebSocket, sid: str):
 
     try:
         print(f"WebSocket connection accepted for session: {sid}")
-        await ws.accept()
+        # await ws.accept()
         loop = asyncio.get_running_loop()
 
         print(f"Found container ID: {container_id} for session: {sid} (user: {user_id})")
