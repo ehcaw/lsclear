@@ -866,28 +866,44 @@ async def terminal_ws(ws: WebSocket, sid: str):
 
 @app.websocket("/db_update/ws/{user_id}")
 async def db_update_websocket(websocket: WebSocket, user_id: str):
+    # Accept the WebSocket connection
     await websocket.accept()
-    await ws_manager.connect(user_id, websocket)  
+    
     try:
+        # Register the connection with the manager
+        await ws_manager.connect(user_id, websocket)
+        print(f"WebSocket connection established for user {user_id}")
+        
+        # Keep the connection alive
         while True:
-            # Keep the connection alive
-            await asyncio.sleep(10)
             try:
+                # Wait for a message (or timeout)
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+                # If we get a message, respond with a pong
+                if data == "ping":
+                    await websocket.send_text("pong")
+            except asyncio.TimeoutError:
                 # Send a ping to keep the connection alive
-                await websocket.send_json({"type": "ping"})
-            except Exception as e:
-                print(f"Error sending ping: {e}")
+                try:
+                    await websocket.send_json({"type": "ping"})
+                except:
+                    break  # Connection lost
+            except WebSocketDisconnect:
+                print(f"Client {user_id} disconnected")
                 break
-    except WebSocketDisconnect:
-        print(f"Client {user_id} disconnected")
-        await ws_manager.disconnect(user_id)  
+            except Exception as e:
+                print(f"WebSocket error for user {user_id}: {e}")
+                break
+                
     except Exception as e:
-        print(f"Unexpected error: {e}")
-        await ws_manager.disconnect(user_id)  
+        print(f"Unexpected error in WebSocket for user {user_id}: {e}")
     finally:
-        # Ensure cleanup happens even if an exception occurs
-        if user_id in ws_manager.active_connections and websocket in ws_manager.active_connections[user_id]:
-            ws_manager.active_connections[user_id].remove(websocket)
+        # Clean up the connection
+        try:
+            await ws_manager.disconnect(user_id, websocket)
+            print(f"WebSocket connection closed for user {user_id}")
+        except Exception as e:
+            print(f"Error during WebSocket cleanup for user {user_id}: {e}")
 
 @app.post("/run")
 async def run(user_data: dict):

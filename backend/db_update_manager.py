@@ -1,6 +1,5 @@
-# Add these imports at the top of main.py
 from typing import Dict, Set
-from fastapi import WebSocket 
+from fastapi import WebSocket
 import json
 from datetime import datetime, timezone
 
@@ -14,44 +13,44 @@ class DBUpdateManager:
             self.active_connections[user_id] = set()
         self.active_connections[user_id].add(websocket)
         print(f"New WebSocket connection for user {user_id}")
+        return websocket
 
     async def disconnect(self, user_id: str, websocket: WebSocket = None):
         """Remove a WebSocket connection"""
-        if user_id in self.active_connections:
-            if websocket:
-                try:
-                    await websocket.close()
-                    self.active_connections[user_id].discard(websocket)
-                    print(f"Closed WebSocket for user {user_id}")
-                except Exception as e:
-                    print(f"Error closing WebSocket: {e}")
+        if user_id not in self.active_connections:
+            return
             
-            # If no specific websocket provided or no more connections for this user
-            if not websocket or not self.active_connections[user_id]:
-                if user_id in self.active_connections:
-                    # Close all connections for this user
-                    for ws in list(self.active_connections[user_id]):
-                        try:
-                            await ws.close()
-                        except:
-                            pass
-                    del self.active_connections[user_id]
-                    print(f"Removed all WebSocket connections for user {user_id}")
+        if websocket:
+            try:
+                await websocket.close()
+                self.active_connections[user_id].discard(websocket)
+                print(f"Closed WebSocket for user {user_id}")
+            except Exception as e:
+                print(f"Error closing WebSocket: {e}")
+        
+        # Clean up if no more connections for this user
+        if not self.active_connections[user_id]:
+            del self.active_connections[user_id]
+            print(f"No more active WebSocket connections for user {user_id}")
 
     async def send_personal_message(self, message: str, user_id: str):
         """Send a message to all WebSocket connections for a user"""
-        if user_id in self.active_connections:
-            disconnected = set()
-            for connection in list(self.active_connections[user_id]):
-                try:
-                    await connection.send_text(message)
-                except Exception as e:
-                    print(f"Error sending message to WebSocket: {e}")
-                    disconnected.add(connection)
+        if user_id not in self.active_connections:
+            return False
             
-            # Clean up disconnected sockets
-            for connection in disconnected:
-                await self.disconnect(user_id, connection)
+        disconnected = set()
+        for connection in list(self.active_connections[user_id]):
+            try:
+                await connection.send_text(message)
+            except Exception as e:
+                print(f"Error sending message to WebSocket: {e}")
+                disconnected.add(connection)
+        
+        # Clean up disconnected sockets
+        for connection in disconnected:
+            await self.disconnect(user_id, connection)
+            
+        return True
 
 # Create a global instance
 ws_manager = DBUpdateManager()
