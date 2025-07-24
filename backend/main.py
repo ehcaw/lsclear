@@ -33,13 +33,16 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],  # Explicitly expose all headers
     max_age=600,  # Cache preflight response for 10 minutes
-    allow_websockets=True
 )
 
 neon_db = NeonDB()
 
 session_containers = {}
 user_containers = {}  # Maps user_id to container_id
+
+@app.get("/test")
+async def test():
+    return {"status": "ok"}
 
 def cleanup_old_containers():
     """Clean up old containers that are no longer in use"""
