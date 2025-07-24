@@ -82,7 +82,11 @@ def get_or_create_container(user_id: str):
                 try:
                     container.start()
                     # Verify the container is actually running
-                    container.reload()
+                    for _ in range(10):
+                        container.reload()
+                        if container.status == "running":
+                            break
+                        time.sleep(1)
                     if container.status != 'running':
                         print(f"Failed to start container {container.id}, removing and creating new one...")
                         container.remove(force=True)
