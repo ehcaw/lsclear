@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import dynamic from 'next/dynamic';
+import { HelpDialog } from "@/components/editor/help";
 
 // Import the dynamic editor component
 const MonacoEditor = dynamic(
@@ -263,13 +264,8 @@ export default function Home() {
 
                 {/* Right side - Actions */}
                 <div className="flex items-center space-x-2">
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipContent side="bottom" className="text-xs">
-                        <p>Run your code (⌘+Enter)</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
+                  
+                  <HelpDialog />
 
                   <TooltipProvider>
                     <Tooltip>
