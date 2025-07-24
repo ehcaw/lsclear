@@ -59,3 +59,39 @@ export async function POST(request: Request) {
     );
   }
 }
+
+// PATCH /api/files/[id]
+export async function PATCH(
+  request: Request,
+  { params }: { params: { id: string } },
+) {
+  try {
+    const id = params.id;
+    const body = await request.json();
+    const { content, userId } = body;
+
+    if (!content || !userId) {
+      return NextResponse.json(
+        { error: "Missing required fields" },
+        { status: 400 },
+      );
+    }
+
+    await sql`
+      UPDATE fs_nodes
+      SET 
+        content = ${content}, 
+        updated_at = NOW()
+      WHERE id = ${id} AND user_id = ${userId}
+      RETURNING id
+    `;
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("Error updating file:", error);
+    return NextResponse.json(
+      { error: "Failed to update file" },
+      { status: 500 },
+    );
+  }
+}

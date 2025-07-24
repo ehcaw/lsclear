@@ -114,18 +114,37 @@ export default function LoginPage() {
             </div>
             <pre className="text-sm text-slate-300 font-mono leading-relaxed">
               <code>{`# Welcome to lsclear!
-import numpy as np
-import matplotlib.pyplot as plt
+            import numpy as np
+            import matplotlib.pyplot as plt
+            from typing import List, Tuple
 
-function createMagic() {
-    const x = Array.from({ length: 100 }, (_, i) => i * (4 * Math.PI) / 99);
-    const y = x.map(val => Math.sin(val) * Math.exp(-val / 10));
+            def generate_wave_data() -> Tuple[np.ndarray, np.ndarray]:
+                """Generate sample wave data for visualization"""
+                x = np.linspace(0, 4 * np.pi, 200)
+                y = np.sin(x) * np.exp(-x/10)  # Damped sine wave
+                return x, y
 
-    // Plotting would happen here in Python context
-    console.log(y);
-}
+            def plot_wave(x: np.ndarray, y: np.ndarray) -> None:
+                """Plot and display the wave"""
+                plt.figure(figsize=(10, 4))
+                plt.plot(x, y, 'b-', linewidth=2, label='Damped Sine Wave')
+                plt.title('Damped Sine Wave')
+                plt.xlabel('Time')
+                plt.ylabel('Amplitude')
+                plt.legend()
+                plt.grid(True, alpha=0.3)
+                plt.tight_layout()
+                plt.show()
 
-createMagic();`}</code>
+            if __name__ == "__main__":
+                # Generate and plot the data
+                x, y = generate_wave_data()
+                plot_wave(x, y)
+                
+                # Show some statistics
+                print(f"Data points generated: {len(x)}")
+                print(f"Max amplitude: {y.max():.4f}")
+                print(f"Min amplitude: {y.min():.4f}")`}</code>
             </pre>
           </div>
         </div>

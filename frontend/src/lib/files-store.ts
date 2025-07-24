@@ -60,7 +60,7 @@ const useFileStore = create<FileStore>((set, get) => ({
     set({ userId });
   },
 
-  loadFileTree: async () => {
+  loadFileTree: async (fileTree?: any) => {
     const { userId } = get();
 
     try {
@@ -70,14 +70,15 @@ const useFileStore = create<FileStore>((set, get) => ({
         get().initWithDefaults();
         return;
       }
-
+      if(!fileTree){
       const response = await fetch(`/api/files/tree?userId=${userId}`);
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      const fileTree = await response.json();
+        fileTree = await response.json();
+      }
 
       set({
         fileTree: fileTree || [],

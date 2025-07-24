@@ -161,8 +161,6 @@ export default function Home() {
   }, []);
 
   const renderEditor = () => {
-    console.log("activeFileId", activeFileId);
-    console.log("currentFile", currentFile);
     if (!activeFileId && !currentFile) {
       return <EditorPlaceholder />;
     }
@@ -307,7 +305,7 @@ export default function Home() {
                     size="icon"
                     className="h-8 w-8"
                     disabled={!userId}
-                    onClick={() => router.push("/login")}
+                    onClick={() => {createAuthClient().signOut(); router.push("/login")}}
                   >
                     {userId ? (
                       <User className="h-4 w-4" />

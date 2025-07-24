@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { ProjectStructure } from "./project-structure";
 import { FolderTree, Code } from 'lucide-react';
 import { cn } from "@/lib/utils";
+import useFileStore  from "@/lib/files-store";
 
 interface FileNode {
   id: number;
@@ -25,6 +26,7 @@ interface SidebarProps {
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
 export function Sidebar({ userId, onSelectChange, className }: SidebarProps) {
+  const { loadFileTree } = useFileStore();
   const { data: projectData, error, isLoading: isLoadingProject, mutate } = useSWR<FileNode[]>(
     userId ? `/api/files/tree?userId=${userId}` : null,
     fetcher,
@@ -74,6 +76,7 @@ export function Sidebar({ userId, onSelectChange, className }: SidebarProps) {
   useEffect(() => {
     if (wsData) {
       mutate();
+      loadFileTree();
     }
   }, [wsData, mutate]);
 

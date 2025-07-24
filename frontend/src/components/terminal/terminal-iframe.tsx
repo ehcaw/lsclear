@@ -75,7 +75,9 @@ const TerminalIframe: React.FC<TerminalIframeProps> = ({
           terminal.current!.focus();
         
           // tell the backend our size…
-          const { rows, cols } = fitAddon.current!.proposeDimensions()!;
+          const dimensions = fitAddon.current!.proposeDimensions() || { rows: 24, cols: 80 };
+          const rows = Math.max(10, Math.min(50, dimensions.rows || 24));
+          const cols = Math.max(20, Math.min(200, dimensions.cols || 80));
           ws.current!.send(JSON.stringify({ type: "resize", rows, cols }));
         
           // hook up xterm ↔ websocket (this wires both onData and onmessage)
@@ -134,7 +136,37 @@ const TerminalIframe: React.FC<TerminalIframeProps> = ({
     // Initialize terminal
     terminal.current = new Terminal({
       cursorBlink: true,
-      fontFamily: "monospace",
+      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+      fontSize: 14,
+      theme: {
+        background: '#1e1e1e',
+        foreground: '#f0f0f0',
+        cursor: '#f0f0f0',
+        cursorAccent: '#1e1e1e',
+      },
+      allowTransparency: true,
+      scrollback: 10000,
+      convertEol: true,
+      disableStdin: false,
+      windowsMode: false,
+      screenReaderMode: false,
+      macOptionIsMeta: false,
+      macOptionClickForcesSelection: false,
+      rightClickSelectsWord: true,
+      rendererType: 'canvas',
+      tabStopWidth: 8,
+      bellStyle: 'sound',
+      drawBoldTextInBrightColors: true,
+      fastScrollModifier: 'alt',
+      fastScrollSensitivity: 5,
+      fontLigatures: false,
+      letterSpacing: 0,
+      lineHeight: 1.2,
+      minimumContrastRatio: 1,
+      overviewRulerWidth: 10,
+      scrollSensitivity: 1,
+      smoothScrollDuration: 100,
+      wordSeparator: ' ()[]{}\'"',
     });
 
     fitAddon.current = new FitAddon();
@@ -258,17 +290,28 @@ const TerminalIframe: React.FC<TerminalIframeProps> = ({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="bg-gray-800 text-white p-2 text-sm flex justify-between items-center">
+      <div className="flex items-center justify-between bg-gray-800 text-white p-2 text-sm">
         <span>Terminal {status && `(${status})`}</span>
         <button
           onClick={refreshWs}
-          className="text-gray-300 hover:text-white p-1 rounded hover:bg-gray-700 transition-colors"
+          className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-gray-700 hover:bg-gray-600 text-gray-200 hover:text-white transition-colors"
           title="Restart terminal session"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          <svg 
+            xmlns="http://www.w3.org/2000/svg" 
+            className="h-4 w-4" 
+            fill="none" 
+            viewBox="0 0 24 24" 
+            stroke="currentColor"
+          >
+            <path 
+              strokeLinecap="round" 
+              strokeLinejoin="round" 
+              strokeWidth={2} 
+              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" 
+            />
           </svg>
-
+          <span className="text-sm">Restart</span>
         </button>
       </div>
       <div ref={terminalRef} className="h-full w-full bg-black" />

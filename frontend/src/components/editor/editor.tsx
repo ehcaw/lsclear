@@ -1,40 +1,44 @@
-"use client";
-import React, { useRef, useEffect } from "react";
+// In editor.tsx
+import { useEffect, useRef } from "react";
 import * as monaco from "monaco-editor";
+import { useTheme } from "next-themes";
 
 interface MonacoEditorProps {
   value: string;
-  language?: string;
-  theme?: string;
-  options?: monaco.editor.IStandaloneEditorConstructionOptions;
   onChange?: (value: string) => void;
-  height?: string;
-  width?: string;
+  language?: string;
+  theme?: 'light' | 'dark' | 'vs-dark';
+  options?: monaco.editor.IStandaloneEditorConstructionOptions;
+  className?: string;
 }
 
-const MonacoEditor: React.FC<MonacoEditorProps> = ({
+export default function MonacoEditor({
   value,
-  language = "python",
-  theme = "vs-dark",
-  options = {},
   onChange,
-  height = "500px",
-  width = "100%",
-}) => {
+  language = "python",
+  theme: themeProp,
+  options = {},
+  className = "",
+}: MonacoEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
-  const monacoEditorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(
-    null,
-  );
+  const monacoEditorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const { theme } = useTheme();
 
+  // Initialize editor and handle theme changes
   useEffect(() => {
-    if (editorRef.current) {
+    if (!editorRef.current) return;
+
+    // Only create the editor if it doesn't exist
+    if (!monacoEditorRef.current) {
+      // Define theme
       monaco.editor.defineTheme("customTheme", {
-        base: theme === "vs-dark" ? "vs-dark" : "vs",
+        base: theme === "dark" ? "vs-dark" : "vs",
         inherit: true,
         rules: [],
         colors: {},
       });
 
+      // Create editor
       monacoEditorRef.current = monaco.editor.create(editorRef.current, {
         value,
         language,
@@ -45,37 +49,54 @@ const MonacoEditor: React.FC<MonacoEditorProps> = ({
         ...options,
       });
 
-      monacoEditorRef.current.onDidChangeModelContent(() => {
-        if (onChange && monacoEditorRef.current) {
-          onChange(monacoEditorRef.current.getValue());
-        }
-      });
+      // Set up change handler
+      const model = monacoEditorRef.current.getModel();
+      if (model) {
+        const changeSubscription = model.onDidChangeContent(() => {
+          onChange?.(model.getValue());
+        });
+        
+        // Clean up subscription on unmount
+        return () => {
+          changeSubscription.dispose();
+          monacoEditorRef.current?.dispose();
+          monacoEditorRef.current = null;
+        };
+      }
     }
+  }, []); // Empty dependency array - only run on mount
 
-    return () => {
-      monacoEditorRef.current?.dispose();
-    };
-  }, [language, onChange, options, theme, value]);
+  // Update theme when it changes
   useEffect(() => {
-    if (
-      monacoEditorRef.current &&
-      typeof value === "string" &&
-      value !== monacoEditorRef.current.getValue()
-    ) {
-      monacoEditorRef.current.setValue(value);
+    if (monacoEditorRef.current) {
+      monaco.editor.setTheme(theme === "dark" ? "vs-dark" : "vs");
+    }
+  }, [theme]);
+
+  // Update value when it changes from outside
+  useEffect(() => {
+    if (monacoEditorRef.current) {
+      const model = monacoEditorRef.current.getModel();
+      if (model && value !== model.getValue()) {
+        // Preserve cursor position
+        const position = monacoEditorRef.current.getPosition();
+        model.setValue(value);
+        if (position) {
+          monacoEditorRef.current.setPosition(position);
+        }
+      }
     }
   }, [value]);
 
-  // Update language and theme when they change
+  // Update language when it changes
   useEffect(() => {
     if (monacoEditorRef.current) {
-      monaco.editor.setModelLanguage(
-        monacoEditorRef.current.getModel()!,
-        language,
-      );
-      monaco.editor.setTheme(theme === "vs-dark" ? "vs-dark" : "vs");
+      const model = monacoEditorRef.current.getModel();
+      if (model) {
+        monaco.editor.setModelLanguage(model, language);
+      }
     }
-  }, [language, theme]);
+  }, [language]);
 
   // Update options when they change
   useEffect(() => {
@@ -84,7 +105,5 @@ const MonacoEditor: React.FC<MonacoEditorProps> = ({
     }
   }, [options]);
 
-  return <div ref={editorRef} style={{ height, width }} />;
-};
-
-export default MonacoEditor;
+  return <div ref={editorRef} className={className} style={{ height: "100%", width: "100%" }} />;
+}
