@@ -15,11 +15,13 @@ class DBUpdateManager:
         self.active_connections[user_id].add(websocket)
         print(f"New WebSocket connection for user {user_id}")
 
-    def disconnect(self, user_id: str, websocket: WebSocket):
+    async def disconnect(self, user_id: str):
         if user_id in self.active_connections:
-            self.active_connections[user_id].discard(websocket)
-            if not self.active_connections[user_id]:
-                del self.active_connections[user_id]
+            try:
+                await self.active_connections[user_id].close()
+            except Exception as e:
+                print(f"Error closing WebSocket: {e}")
+            del self.active_connections[user_id]
 
     async def send_personal_message(self, message: str, user_id: str):
         if user_id in self.active_connections:

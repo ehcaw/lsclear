@@ -284,8 +284,6 @@ async def fs_event(evt: FSEvent):
                     parent_id=parent_id,
                     content=""
                 )
-                # Create the actual file in the container
-                fsm.container.exec_run(f"touch {path}", tty=True)
                 await notify_file_update(evt.user_id, "create", path)
             except Exception as e:
                 if "duplicate" in str(e).lower():
@@ -349,8 +347,6 @@ async def fs_event(evt: FSEvent):
                     is_dir=True,
                     parent_id=parent_id
                 )
-                # Create the actual directory in the container
-                fsm.container.exec_run(f"mkdir -p {path}", tty=True)
                 await notify_file_update(evt.user_id, "create", path)
             except Exception as e:
                 if "duplicate" in str(e).lower():
@@ -432,8 +428,6 @@ async def fs_event(evt: FSEvent):
             for node_id, is_dir in nodes_to_delete:
                 fsm.db.delete_node(evt.user_id, node_id)
             
-            # Delete from container
-            fsm.container.exec_run(f"rm -rf {path}", tty=True)
             await notify_file_update(evt.user_id, "delete", path)
             
         elif action == "mv" and len(args) == 2:
@@ -528,8 +522,6 @@ async def fs_event(evt: FSEvent):
                 (dest_name, dest_parent_id, node_id)
             )
             
-            # Move the file/directory in the container
-            fsm.container.exec_run(f"mv {src} {dest}", tty=True)
             await notify_file_update(evt.user_id, "move", src, dest)
             
         return {"ok": True}
@@ -825,17 +817,23 @@ async def terminal_ws(ws: WebSocket, sid: str):
 
 @app.websocket("/db_update/ws/{user_id}")
 async def db_update_websocket(websocket: WebSocket, user_id: str):
-    # await websocket.accept()
-    await ws_manager.connect(user_id, websocket)
+    await ws_manager.connect(websocket, user_id)
     try:
         while True:
-            # Keep connection alive, we only send messages from server
-            await websocket.receive_text()
+            # Keep the connection alive
+            await asyncio.sleep(10)
+            try:
+                # Send a ping to keep the connection alive
+                await websocket.send_json({"type": "ping"})
+            except Exception as e:
+                print(f"Error sending ping: {e}")
+                break
     except WebSocketDisconnect:
-        ws_manager.disconnect(user_id, websocket)
+        print(f"Client {user_id} disconnected")
     except Exception as e:
-        print(f"WebSocket error: {e}")
-        ws_manager.disconnect(user_id, websocket)
+        print(f"Unexpected error: {e}")
+    finally:
+        await ws_manager.disconnect(user_id)
 
 @app.post("/run")
 async def run(user_data: dict):
