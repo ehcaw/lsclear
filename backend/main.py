@@ -78,93 +78,74 @@ def get_or_create_container(user_id: str):
         if containers:
             container = containers[0]
             if container.status != 'running':
-                container.start()
+                print(f"Container {container.id} is {container.status}, attempting to start...")
+                try:
+                    container.start()
+                    # Verify the container is actually running
+                    container.reload()
+                    if container.status != 'running':
+                        print(f"Failed to start container {container.id}, removing and creating new one...")
+                        container.remove(force=True)
+                        raise docker.errors.NotFound("Container failed to start")
+                except Exception as e:
+                    print(f"Error starting container {container.id}: {e}")
+                    container.remove(force=True)
+                    raise
             print(f"Reusing existing container {container.id} for user {user_id}")
             return container
     except Exception as e:
         print(f"Error finding existing container: {e}")
+        if 'containers' in locals() and containers:
+            try:
+                containers[0].remove(force=True)
+            except:
+                pass
 
-    # Create new container if none exists
+    # Create new container if none exists or if there was an error with the existing one
     print(f"Creating new container for user {user_id}")
-    container = client.containers.run(
-        "ehcaw/lsclear:latest",
-        command=["tail", "-f", "/dev/null"],  # Keep container running
-        tty=True,
-        detach=True,
-        working_dir="/workspace",
-        network_disabled=False,
-        mem_limit="1g",  # Increased memory limit
-        cpu_quota=50000,
-        labels={"user_id": user_id, "managed_by": "terminal"},
-        name=f"terminal-{user_id}",
-        remove=False,
-        auto_remove=False,
-        environment={
-            "TERM": "xterm-256color",
-            "HOME": "/root",
-            "SHELL": "/bin/bash",
-            "USER": "root",
-            "DEBIAN_FRONTEND": "noninteractive",  # Add this to prevent interactive prompts
-            "USER_ID": user_id,
-            "FASTAPI_URL": os.getenv("FASTAPI_URL"),
-        },
-        volumes={
-            '/var/run/docker.sock': {
-                'bind': '/var/run/docker.sock',
-                'mode': 'ro'
-            }
-        },
-        privileged=True,  # Required for some operations
-        extra_hosts={"host.docker.internal": "host-gateway"},    
-    )
-    
-    # Install basic tools
-    exit_code, output = container.exec_run(
-        "apt-get update && apt-get install -y bash-completion vim nano curl wget git",
-        environment={"DEBIAN_FRONTEND": "noninteractive"},
-        tty=True
-    )
-    
-    # Create a simple bashrc with basic settings
     try:
-        # Set a simple prompt
-        container.exec_run("echo \"export PS1='[\\u@\\h \\W]\\\\$ '\" > /root/.bashrc", tty=True)
-        # Add some useful aliases
-        container.exec_run("echo \"alias ll='ls -la'\" >> /root/.bashrc", tty=True)
-        # Set proper permissions
-        container.exec_run("chmod 644 /root/.bashrc", tty=True)
-        container.exec_run(
-            f'''bash -lc 'cat <<"EOF" >> /root/.bashrc
-        # ---- IDE sync-hook ----
-        export IDE_API="http://host.docker.internal:8000"
-        export USER_ID="{user_id}"
-        export IDE_USER="$USER_ID"
-
-        preexec() {{
-        local cmd="$BASH_COMMAND"
-        local cwd="$(pwd -P)"           # absolute working dir
-        case "$cmd" in
-            touch*|mkdir*|rm*|mv*|cp*|cd*)   # include cd so backend can track dirs
-            curl -s -X POST "$IDE_API/api/fs-event" \\
-                -H "Content-Type: application/json" \\
-                -d "{{\\"user_id\\":\\"$IDE_USER\\",\\"cmd\\":\\"$cmd\\",\\"cwd\\":\\"$cwd\\"}}" \\
-                >/dev/null 2>&1
-            ;;
-        esac
-        }}
-        trap preexec DEBUG
-        # ------------------------
-        EOF
-        ' ''',
-            tty=True
+        container = client.containers.run(
+            "ehcaw/lsclear:latest",
+            command=["tail", "-f", "/dev/null"],  # Keep container running
+            tty=True,
+            detach=True,
+            working_dir="/workspace",
+            network_disabled=False,
+            mem_limit="1g",
+            cpu_quota=50000,
+            labels={"user_id": user_id, "managed_by": "terminal"},
+            name=f"terminal-{user_id}",
+            remove=False,
+            restart_policy={"Name": "on-failure", "MaximumRetryCount": 3},
+            healthcheck={
+                "Test": ["CMD-SHELL", "exit 0"],
+                "Interval": 30000000000,  # 30 seconds
+                "Timeout": 10000000000,   # 10 seconds
+                "Retries": 3
+            }
         )
-        container.exec_run("source ~/.bashrc", tty=True)
+        
+        # Wait a moment for the container to start
+        import time
+        time.sleep(2)
+        
+        # Verify the container is running
+        container.reload()
+        if container.status != 'running':
+            raise Exception(f"Container failed to start. Status: {container.status}")
+            
+        print(f"Successfully created container {container.id} for user {user_id}")
+        return container
+        
     except Exception as e:
-        print(f"Warning: Failed to set up bashrc: {e}")
-
-    
-    print(f"Created new container {container.id} for user {user_id}")
-    return container
+        print(f"Error creating container: {e}")
+        # Clean up any partially created container
+        if 'container' in locals():
+            try:
+                container.remove(force=True)
+            except:
+                pass
+        raise
 
 @app.post("/terminal/start")
 async def create_session(user_data: dict):
@@ -456,12 +437,14 @@ async def fs_event(evt: FSEvent):
             # First try to find the node with the full path
             cursor.execute("""
                 WITH RECURSIVE node_path AS (
+                    -- Start with the target node
                     SELECT id, parent_id, name, is_dir, ARRAY[name] as path
                     FROM fs_nodes 
                     WHERE user_id = %s AND parent_id IS NULL
                     
                     UNION ALL
                     
+                    -- Recursively find all children
                     SELECT f.id, f.parent_id, f.name, f.is_dir, np.path || f.name
                     FROM fs_nodes f
                     JOIN node_path np ON f.parent_id = np.id
@@ -883,7 +866,7 @@ async def terminal_ws(ws: WebSocket, sid: str):
 
 @app.websocket("/db_update/ws/{user_id}")
 async def db_update_websocket(websocket: WebSocket, user_id: str):
-    await ws_manager.connect(websocket, user_id)
+    await ws_manager.connect(user_id, websocket)  
     try:
         while True:
             # Keep the connection alive
@@ -896,10 +879,14 @@ async def db_update_websocket(websocket: WebSocket, user_id: str):
                 break
     except WebSocketDisconnect:
         print(f"Client {user_id} disconnected")
+        await ws_manager.disconnect(user_id)  
     except Exception as e:
         print(f"Unexpected error: {e}")
+        await ws_manager.disconnect(user_id)  
     finally:
-        await ws_manager.disconnect(user_id)
+        # Ensure cleanup happens even if an exception occurs
+        if user_id in ws_manager.active_connections and websocket in ws_manager.active_connections[user_id]:
+            ws_manager.active_connections[user_id].remove(websocket)
 
 @app.post("/run")
 async def run(user_data: dict):
