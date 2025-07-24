@@ -122,6 +122,7 @@ export async function PATCH(
     // Forward the request to the backend API
     const response = await fetch(`${process.env.NEXT_PUBLIC_REACT_APP_API_URL}/api/files/${id}`, {
       method: 'PUT',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
       },

@@ -33,6 +33,7 @@ const TerminalIframe: React.FC<TerminalIframeProps> = ({
       // Start terminal session
       const response = await fetch(`${apiBaseUrl}/terminal/start`, {
         method: "POST",
+        credentials: 'include',
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ user_id: userId }),
       });

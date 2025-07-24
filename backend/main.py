@@ -31,6 +31,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],  # Explicitly expose all headers
+    max_age=600,  # Cache preflight response for 10 minutes
     allow_websockets=True
 )
 
