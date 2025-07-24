@@ -48,19 +48,20 @@ const TerminalIframe: React.FC<TerminalIframeProps> = ({
 
       // Create WebSocket connection
       let wsUrl: string;
-
-      if (apiBaseUrl.startsWith("http")) {
-        wsUrl = apiBaseUrl.replace(/^http/, "ws");
+      // Handle production vs development URLs
+      if (apiBaseUrl.startsWith('http')) {
+        // Convert http(s) to ws(s) for the base URL
+        wsUrl = apiBaseUrl.replace(/^http/, 'ws');
       } else {
-        const protocol =
-          window.location.protocol === "https:" ? "wss:" : "ws:";
-        const host = window.location.host;
-        wsUrl = `${protocol}//${host}${apiBaseUrl}`;
+        // Fallback for relative URLs or protocol-relative URLs
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const cleanBaseUrl = apiBaseUrl.replace(/^\/+/, '');
+        wsUrl = `${protocol}//${window.location.host}${cleanBaseUrl ? `/${cleanBaseUrl}` : ''}`;
       }
 
-      // Ensure we have proper WebSocket URL
-      wsUrl = `${wsUrl.replace(/\/$/, "")}/terminal/ws/${sid}`;
-      console.log(wsUrl);
+      // Add WebSocket endpoint and session ID
+      wsUrl = `${wsUrl.replace(/\/+$/, '')}/terminal/ws/${sid}`.replace(/([^:]\/)\/+/g, '$1');
+      console.log('WebSocket URL:', wsUrl);
 
       console.log("Creating WebSocket with URL:", wsUrl);
 

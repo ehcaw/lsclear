@@ -324,7 +324,9 @@ export default function Home() {
             <Tabs defaultValue="terminal" className="h-full flex flex-col">
               <TabsContent value="terminal" className="flex-1 min-h-0">
                 <div className="h-full">
-                  <TerminalComponent userId={userId} apiBaseUrl={process.env.NEXT_PUBLIC_REACT_APP_API_URL} />
+                  <TerminalComponent userId={userId} apiBaseUrl={process.env.NODE_ENV === 'production'
+                  ? 'https://api.documix.xyz'  // Your Cloudflare Tunnel URL
+                  : 'http://localhost:8000'} />
                 </div>
               </TabsContent>
               <TabsContent value="output" className="flex-1 min-h-0">
