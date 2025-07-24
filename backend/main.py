@@ -11,6 +11,7 @@ from postgres import NeonDB
 from pydantic import BaseModel
 import shlex
 from db_update_manager import ws_manager, notify_file_update
+import platform
 
 class FSEvent(BaseModel):
     user_id: str
@@ -749,7 +750,7 @@ async def cleanup_user_container(user_id: str):
             raise HTTPException(status_code=500, detail=str(e))
         raise
 
-@app.websocket("/terminal_session/ws/{sid}")
+@app.websocket("/terminal/ws/{sid}")
 async def terminal_ws(ws: WebSocket, sid: str):
     """
     WebSocket proxy to the running container's bash
