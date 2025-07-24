@@ -152,7 +152,7 @@ def get_or_create_container(user_id: str):
         
         # Wait a moment for the container to start
         import time
-        for attempt in range(max_attempts):
+        for attempt in range(30):
             container.reload()
             if container.status == "running":
                 # Verify container is actually responsive
