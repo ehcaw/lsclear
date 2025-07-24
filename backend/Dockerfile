@@ -2,8 +2,10 @@
 FROM python:3.11-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV TERM=xterm-256color
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
+        bash \
         bash-completion \
         build-essential \
         curl wget jq \

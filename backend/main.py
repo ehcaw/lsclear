@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 import docker
 import uuid, asyncio, json, traceback
 import os
+import tarfile
+from io import BytesIO
 from user_file_system import FileSystemManager
 from postgres import NeonDB
 from pydantic import BaseModel
@@ -15,13 +17,17 @@ class FSEvent(BaseModel):
     cmd: str
     cwd: str | None = "/workspace"
 
+class FileUpdate(BaseModel):
+    content: str
+    userId: str
+    filePath: str = None
 
 app = FastAPI()
 client = docker.from_env()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://lsclear.vercel.app", "http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -551,29 +557,83 @@ async def get_file(sid: str, name: str):
         print(f"Error getting file: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.put("/api/files/{sid}/{name}")
-async def save_file(sid: str, name: str, content: str):
-    # lookup container by sid
-    if sid not in session_containers:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    container_id = session_containers[sid]
+@app.put("/api/files/{file_id}")
+async def update_file(file_id: str, update: FileUpdate):
+    """
+    Update a file's content and sync it to the container
+    """
     try:
+        print(update)
+        with neon_db.conn.cursor() as cursor:
+            # Get the full path of the file by recursively traversing its parents
+            cursor.execute("""
+                WITH RECURSIVE file_path AS (
+                    SELECT id, parent_id, name, name::text AS path
+                    FROM fs_nodes
+                    WHERE id = %s AND user_id = %s
+                    UNION ALL
+                    SELECT p.id, p.parent_id, p.name, (fp.path || '/' || p.name)
+                    FROM fs_nodes p
+                    JOIN file_path fp ON p.id = fp.parent_id
+                )
+                SELECT path FROM file_path WHERE id = %s;
+            """, (file_id, update.userId, file_id))
+            
+            result = cursor.fetchone()
+            if not result:
+                raise HTTPException(status_code=404, detail="File not found or access denied")
+            
+            # The query builds the path in reverse, so we split and reverse it
+            path_parts = result[0].split('/')
+            path_parts.reverse()
+            full_path = "/".join(path_parts)
+            
+            # Update the file content in the database
+            cursor.execute("""
+                UPDATE fs_nodes 
+                SET content = %s, updated_at = NOW()
+                WHERE id = %s AND user_id = %s AND NOT is_dir
+            """, (update.content, file_id, update.userId))
+            neon_db.conn.commit()
+
+        # Get the user's container
+        container_id = user_containers.get(update.userId)
+        if not container_id:
+            raise HTTPException(status_code=404, detail="No active container found for user")
+        
         container = client.containers.get(container_id)
+        if container.status != 'running':
+            container.start()
 
-        # Write content to temporary file
-        temp_file = f"/tmp/{name}"
-        with open(temp_file, "w") as f:
-            f.write(content)
+        # --- Safely write file to container using a tar stream ---
+        
+        # In-memory tarfile
+        pw_tarstream = BytesIO()
+        pw_tar = tarfile.TarFile(fileobj=pw_tarstream, mode='w')
+        
+        # Encode content to bytes
+        content_bytes = update.content.encode('utf-8')
+        
+        tarinfo = tarfile.TarInfo(name=full_path)
+        tarinfo.size = len(content_bytes)
+        
+        # Add file to tar stream
+        pw_tar.addfile(tarinfo, BytesIO(content_bytes))
+        
+        pw_tar.close()
+        pw_tarstream.seek(0)
+        
+        # Put the tar stream into the container's workspace
+        container.put_archive(path='/workspace', data=pw_tarstream)
 
-
-        # Clean up temp file
-        os.remove(temp_file)
-
-        return {"ok": True}
+        return {"status": "success", "message": "File updated successfully"}
+            
     except docker.errors.NotFound:
+        if update.userId in user_containers:
+            del user_containers[update.userId]
         raise HTTPException(status_code=404, detail="Container not found")
     except Exception as e:
+        print(f"Error updating file: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/terminal/{sid}")
@@ -845,7 +905,7 @@ async def run(user_data: dict):
         raise HTTPException(status_code=400, detail="user_id is required")
     
     try: 
-        container_id = containers[user_id]
+        container_id = user_containers[user_id]
         container = client.containers.get(container_id)
         
         # Get the directory of the file being executed
@@ -869,5 +929,3 @@ async def run(user_data: dict):
         raise HTTPException(status_code=404, detail="User container not found")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-        
-    
