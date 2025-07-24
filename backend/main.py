@@ -131,6 +131,7 @@ def get_or_create_container(user_id: str):
     try:
         container = client.containers.run(
             "ehcaw/lsclear:latest",
+            platform="linux/amd64",
             command=["tail", "-f", "/dev/null"],  # Keep container running
             tty=True,
             detach=True,
