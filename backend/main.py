@@ -749,7 +749,7 @@ async def cleanup_user_container(user_id: str):
             raise HTTPException(status_code=500, detail=str(e))
         raise
 
-@app.websocket("/terminal/ws/{sid}")
+@app.websocket("/terminal_session/ws/{sid}")
 async def terminal_ws(ws: WebSocket, sid: str):
     """
     WebSocket proxy to the running container's bash
