@@ -44,6 +44,17 @@ user_containers = {}  # Maps user_id to container_id
 async def test():
     return {"status": "ok"}
 
+def get_platform_specific_image(base_image: str) -> str:
+    """Return the appropriate image tag based on the system architecture"""
+    machine = platform.machine().lower()
+    if machine in ('x86_64', 'amd64'):
+        return f"{base_image}:amd64"
+    elif machine in ('arm64', 'aarch64', 'arm64v8'):
+        return f"{base_image}:arm64"
+    else:
+        # Default to amd64 if architecture is unknown
+        return f"{base_image}:amd64"
+
 def cleanup_old_containers():
     """Clean up old containers that are no longer in use"""
     try:
@@ -129,9 +140,10 @@ def get_or_create_container(user_id: str):
     # Create new container if none exists or if there was an error with the existing one
     print(f"Creating new container for user {user_id}")
     try:
+        image_name = get_platform_specific_image("ehcaw/lsclear")
         container = client.containers.run(
-            "ehcaw/lsclear:latest",
-            platform="linux/amd64",
+            image_name,
+            platform="linux/amd64" if "amd64" in image_name else "linux/arm64",
             command=["tail", "-f", "/dev/null"],  # Keep container running
             tty=True,
             detach=True,
