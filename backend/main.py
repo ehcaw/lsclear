@@ -866,6 +866,7 @@ async def terminal_ws(ws: WebSocket, sid: str):
 
 @app.websocket("/db_update/ws/{user_id}")
 async def db_update_websocket(websocket: WebSocket, user_id: str):
+    await websocket.accept()
     await ws_manager.connect(user_id, websocket)  
     try:
         while True:

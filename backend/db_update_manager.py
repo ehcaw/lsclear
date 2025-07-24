@@ -9,27 +9,49 @@ class DBUpdateManager:
         self.active_connections: Dict[str, Set[WebSocket]] = {}
 
     async def connect(self, user_id: str, websocket: WebSocket):
-        await websocket.accept()
+        """Register a new WebSocket connection for a user"""
         if user_id not in self.active_connections:
             self.active_connections[user_id] = set()
         self.active_connections[user_id].add(websocket)
         print(f"New WebSocket connection for user {user_id}")
 
-    async def disconnect(self, user_id: str):
+    async def disconnect(self, user_id: str, websocket: WebSocket = None):
+        """Remove a WebSocket connection"""
         if user_id in self.active_connections:
-            try:
-                await self.active_connections[user_id].close()
-            except Exception as e:
-                print(f"Error closing WebSocket: {e}")
-            del self.active_connections[user_id]
+            if websocket:
+                try:
+                    await websocket.close()
+                    self.active_connections[user_id].discard(websocket)
+                    print(f"Closed WebSocket for user {user_id}")
+                except Exception as e:
+                    print(f"Error closing WebSocket: {e}")
+            
+            # If no specific websocket provided or no more connections for this user
+            if not websocket or not self.active_connections[user_id]:
+                if user_id in self.active_connections:
+                    # Close all connections for this user
+                    for ws in list(self.active_connections[user_id]):
+                        try:
+                            await ws.close()
+                        except:
+                            pass
+                    del self.active_connections[user_id]
+                    print(f"Removed all WebSocket connections for user {user_id}")
 
     async def send_personal_message(self, message: str, user_id: str):
+        """Send a message to all WebSocket connections for a user"""
         if user_id in self.active_connections:
+            disconnected = set()
             for connection in list(self.active_connections[user_id]):
                 try:
                     await connection.send_text(message)
-                except:
-                    self.disconnect(user_id, connection)
+                except Exception as e:
+                    print(f"Error sending message to WebSocket: {e}")
+                    disconnected.add(connection)
+            
+            # Clean up disconnected sockets
+            for connection in disconnected:
+                await self.disconnect(user_id, connection)
 
 # Create a global instance
 ws_manager = DBUpdateManager()
