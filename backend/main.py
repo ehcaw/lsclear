@@ -195,35 +195,53 @@ def get_or_create_container(user_id: str):
         print(f"Successfully created container {container.id} for user {user_id}")
     
         try:
-            # Set proper permissions
-            bash(container, "sed -i '/^# ---- IDE sync-hook ----/,/^# ------------------------/d' /root/.bashrc")
-    
-            # Create hook as a separate file (most reliable)
-            hook_content = f"""export IDE_API="http://host.docker.internal:8000"
-                export USER_ID="{user_id}"
-                export IDE_USER="$USER_ID"
+            def setup_bash_hook(container, user_id):
+                """Set up bash hook with your domain"""
+                
+                # Determine API URL based on environment
+                if os.getenv('ENVIRONMENT') == 'development':
+                    api_url = "http://host.docker.internal:8000"  # Local development
+                else:
+                    api_url = "https://api.documix.xyz"  # Production
+                
+                try:
+                    # Remove existing hook
+                    bash(container, "sed -i '/^# ---- IDE sync-hook ----/,/^# ------------------------/d' /root/.bashrc")
+                    
+                    # Create hook content
+                    hook_content = f"""# ---- IDE sync-hook ----
+            export IDE_API="{api_url}"
+            export USER_ID="{user_id}"
+            export IDE_USER="$USER_ID"
 
-                preexec() {{
-                    local cmd="$BASH_COMMAND"
-                    local cwd="$(pwd -P)"
-                    case "$cmd" in
-                        touch*|mkdir*|rm*|mv*|cp*|cd*)
-                            curl -s -X POST "$IDE_API/api/fs-event" \\
-                                -H 'Content-Type: application/json' \\
-                                -d '{{"user_id":"'"$IDE_USER"'","cmd":"'"$cmd"'","cwd":"'"$cwd"'"}}' \\
-                                >/dev/null 2>&1 &
-                            ;;
-                    esac
-                }}
-                trap preexec DEBUG"""
-    
-            # Write to separate file and source it
-            bash(container, f'cat > /root/.ide_hook.sh << "EOF"\n{hook_content}\nEOF')
-            bash(container, 'chmod +x /root/.ide_hook.sh')
-            bash(container, 'echo "source /root/.ide_hook.sh" >> /root/.bashrc')
-            
-            # Test it worked
-            code, output, error = bash(container, 'bash -c "source /root/.bashrc && type preexec"')
+            preexec() {{
+                local cmd="$BASH_COMMAND"
+                local cwd="$(pwd -P)"
+                case "$cmd" in
+                    touch*|mkdir*|rm*|mv*|cp*|cd*)
+                        curl -s -X POST "$IDE_API/api/fs-event" \\
+                            -H 'Content-Type: application/json' \\
+                            --connect-timeout 5 --max-time 10 \\
+                            -d '{{"user_id":"'"$IDE_USER"'","cmd":"'"$cmd"'","cwd":"'"$cwd"'"}}' \\
+                            >/dev/null 2>&1 &
+                        ;;
+                esac
+            }}
+            trap preexec DEBUG
+            # ------------------------"""
+                    
+                    # Write to file and source it
+                    bash(container, f'cat > /root/.ide_hook.sh << "EOF"\n{hook_content}\nEOF')
+                    bash(container, 'chmod +x /root/.ide_hook.sh')
+                    bash(container, 'echo "source /root/.ide_hook.sh" >> /root/.bashrc')
+                    
+                    print(f"✅ Bash hook installed with API: {api_url}")
+                    return True
+                    
+                except Exception as e:
+                    print(f"❌ Hook setup failed: {e}")
+                    return False
+            setup_bash_hook(container, user_id)
             if code != 0:
                 raise Exception(f"Failed to set up bashrc: {error.decode()}")
 
