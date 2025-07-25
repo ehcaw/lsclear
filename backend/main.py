@@ -12,6 +12,7 @@ from pydantic import BaseModel
 import shlex
 from db_update_manager import ws_manager, notify_file_update
 import platform
+import textwrap
 
 class FSEvent(BaseModel):
     user_id: str
@@ -43,11 +44,10 @@ user_containers = {}  # Maps user_id to container_id
 
 def bash(c, cmd):
     """Run a single Bash command inside the container and print its result."""
-    code, (out, err) = c.exec_run(["bash", "-lc", cmd], demux=True)
+    code, output = c.exec_run(["bash", "-lc", cmd], demux=True)
     if code != 0:
         print("== Bash command failed ==")
-        print(err.decode())
-    return code, out, err
+    return code, output
 
 @app.get("/test")
 async def test():
@@ -113,11 +113,11 @@ def get_or_create_container(user_id: str):
                                     print(f"Container {container.id} is now running and responsive")
                                     break
                                 else:
-                                    print(f"Container {container.id} is running but not responsive (attempt {attempt + 1}/{max_attempts})")
+                                    print(f"Container {container.id} is running but not responsive (attempt {attempt + 1}/{max_attempts}). Error: {output}")
                             except Exception as e:
                                 print(f"Error checking container responsiveness: {e}")
                         else:
-                            print(f"Container {container.id} status: {container.status} (attempt {attempt + 1}/{max_attempts})")
+                            print(f"Container {container.id} status: {container.status} (attempt {attempt + 1}/{max_attempts})")    
                         
                         # If container exited, check logs
                         if container.status == "exited":
@@ -195,54 +195,43 @@ def get_or_create_container(user_id: str):
         print(f"Successfully created container {container.id} for user {user_id}")
     
         try:
-            def setup_bash_hook(container, user_id):
-                """Set up bash hook with your domain"""
-                
-                # Determine API URL based on environment
-                if os.getenv('ENVIRONMENT') == 'development':
-                    api_url = "http://host.docker.internal:8000"  # Local development
-                else:
-                    api_url = "https://api.documix.xyz"  # Production
-                
-                try:
-                    # Remove existing hook
-                    bash(container, "sed -i '/^# ---- IDE sync-hook ----/,/^# ------------------------/d' /root/.bashrc")
-                    
-                    # Create hook content
-                    hook_content = f"""# ---- IDE sync-hook ----
-                        export IDE_API="{api_url}"
-                        export USER_ID="{user_id}"
-                        export IDE_USER="$USER_ID"
+            # Determine API URL based on environment
+            if os.getenv('ENVIRONMENT') == 'development':
+                api_url = "http://host.docker.internal:8000"  # Local development
+            else:
+                api_url = "https://api.documix.xyz"  # Production
+            # Set a simple prompt
+            container.exec_run("echo \"export PS1='[\\u@\\h \\W]\\\\$ '\" > /root/.bashrc", tty=True)
+            # Add some useful aliases
+            container.exec_run("echo \"alias ll='ls -la'\" >> /root/.bashrc", tty=True)
+            # Set proper permissions
+            container.exec_run("chmod 644 /root/.bashrc", tty=True)
+            container.exec_run(
+                f'''bash -lc 'cat <<"EOF" >> /root/.bashrc
+            # ---- IDE sync-hook ----
+            export IDE_API="{api_url}"
+            export USER_ID="{user_id}"
+            export IDE_USER="$USER_ID"
 
-                        preexec() {{
-                            local cmd="$BASH_COMMAND"
-                            local cwd="$(pwd -P)"
-                            case "$cmd" in
-                                touch*|mkdir*|rm*|mv*|cp*|cd*)
-                                    curl -s -X POST "$IDE_API/api/fs-event" \\
-                                        -H 'Content-Type: application/json' \\
-                                        -d '{{"user_id":"'"$IDE_USER"'","cmd":"'"$cmd"'","cwd":"'"$cwd"'"}}' \\
-                                        >/dev/null 2>&1 &
-                                    ;;
-                            esac
-                        }}
-                        trap preexec DEBUG"""
-                    
-                    # Write to file and source it
-                    bash(container, f'cat > /root/.ide_hook.sh << "EOF"\n{hook_content}\nEOF')
-                    bash(container, 'chmod +x /root/.ide_hook.sh')
-                    bash(container, 'echo "source /root/.ide_hook.sh" >> /root/.bashrc')
-                    
-                    print(f"✅ Bash hook installed with API: {api_url}")
-                    return True
-                    
-                except Exception as e:
-                    print(f"❌ Hook setup failed: {e}")
-                    return False
-            setup_bash_hook(container, user_id)
-            bash(container, 'export BASH_ENV=/root/.bashrc')
-            bash(container, "source ~/.bashrc")
-
+            preexec() {{
+            local cmd="$BASH_COMMAND"
+            local cwd="$(pwd -P)"           # absolute working dir
+            case "$cmd" in
+                touch*|mkdir*|rm*|mv*|cp*|cd*)   # include cd so backend can track dirs
+                curl -s -X POST "$IDE_API/api/fs-event" \\
+                    -H "Content-Type: application/json" \\
+                    -d "{{\\"user_id\\":\\"$IDE_USER\\",\\"cmd\\":\\"$cmd\\",\\"cwd\\":\\"$cwd\\"}}" \\
+                    >/dev/null 2>&1
+                ;;
+            esac
+            }}
+            trap preexec DEBUG
+            # ------------------------
+            EOF
+            ' ''',
+                tty=True
+            )
+            container.exec_run("source ~/.bashrc", tty=True)
             return container
         except Exception as e:
             print(f"Warning: Failed to set up bashrc: {e}")
