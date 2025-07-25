@@ -16,7 +16,6 @@ export default function MonacoEditor({
   value,
   onChange,
   language = "python",
-  theme: themeProp,
   options = {},
   className = "",
 }: MonacoEditorProps) {
@@ -42,7 +41,7 @@ export default function MonacoEditor({
       monacoEditorRef.current = monaco.editor.create(editorRef.current, {
         value,
         language,
-        theme: "customTheme",
+        theme: "vs-dark",
         automaticLayout: true,
         minimap: { enabled: true },
         scrollBeyondLastLine: false,

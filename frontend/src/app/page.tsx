@@ -190,7 +190,6 @@ export default function Home() {
           language={language}
           value={content}
           onChange={handleEditorChange}
-          theme={theme === "dark" ? "vs-dark" : "light"}
           options={{
             minimap: { enabled: false },
             scrollBeyondLastLine: false,

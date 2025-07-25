@@ -20,15 +20,6 @@ export interface FileNode {
   children?: FileNode[];
 }
 
-// Helper function to build a tree from a flat list of nodes
-function buildTree(nodes: FileNode[], parentId: number | null = null): FileNode[] {
-  return nodes
-    .filter(node => node.parent_id === parentId)
-    .map(node => ({
-      ...node,
-      children: buildTree(nodes, node.id)
-    }));
-}
 
 export async function getFileTreeForUser(userId: string): Promise<FileNode[]> {
   const client = await pool.connect();

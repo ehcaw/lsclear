@@ -41,6 +41,9 @@ neon_db = NeonDB()
 session_containers = {}
 user_containers = {}  # Maps user_id to container_id
 
+def bash(container, cmd):
+    return container.exec_run(["bash", "-lc", cmd], tty=True)
+
 @app.get("/test")
 async def test():
     return {"status": "ok"}
@@ -100,7 +103,7 @@ def get_or_create_container(user_id: str):
                         if container.status == "running":
                             # Verify container is actually responsive
                             try:
-                                exit_code, output = container.exec_run("echo test", tty=True)
+                                exit_code, output = bash(container, "echo test")
                                 if exit_code == 0:
                                     print(f"Container {container.id} is now running and responsive")
                                     break
@@ -142,8 +145,9 @@ def get_or_create_container(user_id: str):
     try:
         image_name = get_platform_specific_image("ehcaw/lsclear")
         container = client.containers.run(
-            image_name,
-            platform="linux/amd64" if "amd64" in image_name else "linux/arm64",
+            # image_name,
+            "ehcaw/lsclear:latest",
+            # platform="linux/amd64" if "amd64" in image_name else "linux/arm64",
             command=["tail", "-f", "/dev/null"],  # Keep container running
             tty=True,
             detach=True,
@@ -170,7 +174,7 @@ def get_or_create_container(user_id: str):
             if container.status == "running":
                 # Verify container is actually responsive
                 try:
-                    exit_code, output = container.exec_run("echo test", tty=True)
+                    exit_code, output = bash(container, "echo test")
                     if exit_code == 0:
                         print(f"Container {container.id} is now running and responsive")
                         break
@@ -187,12 +191,12 @@ def get_or_create_container(user_id: str):
     
         try:
             # Set a simple prompt
-            container.exec_run("echo \"export PS1='[\\u@\\h \\W]\\\\$ '\" > /root/.bashrc", tty=True)
+            bash(container, "echo \"export PS1='[\\u@\\h \\W]\\\\$ '\" > /root/.bashrc")
             # Add some useful aliases
-            container.exec_run("echo \"alias ll='ls -la'\" >> /root/.bashrc", tty=True)
+            bash(container, "echo \"alias ll='ls -la'\" >> /root/.bashrc")
             # Set proper permissions
-            container.exec_run("chmod 644 /root/.bashrc", tty=True)
-            container.exec_run(
+            bash(container, "chmod 644 /root/.bashrc")
+            bash(container,
                 f'''bash -lc 'cat <<"EOF" >> /root/.bashrc
             # ---- IDE sync-hook ----
             export IDE_API="http://host.docker.internal:8000"
@@ -214,10 +218,11 @@ def get_or_create_container(user_id: str):
             trap preexec DEBUG
             # ------------------------
             EOF
-            ' ''',
-                tty=True
+            ' '''
             )
-            container.exec_run("source ~/.bashrc", tty=True)
+            bash(container, 'export BASH_ENV=/root/.bashrc')
+            bash(container, "source ~/.bashrc")
+
             return container
         except Exception as e:
             print(f"Warning: Failed to set up bashrc: {e}")
@@ -621,7 +626,7 @@ async def get_file(sid: str, name: str):
     try:
         container = client.containers.get(container_id)
         # Get file content directly from the container
-        exit_code, output = container.exec_run(f"cat /workspace/{name}")
+        exit_code, output = bash(container, f"cat /workspace/{name}")
         if exit_code != 0:
             raise HTTPException(status_code=404, detail="File not found")
         return {"content": output.decode('utf-8')}
