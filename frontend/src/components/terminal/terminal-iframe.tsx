@@ -85,8 +85,9 @@ const TerminalIframe: React.FC<TerminalIframeProps> = ({
           ws.current!.send(JSON.stringify({ type: "resize", rows, cols }));
         
           // hook up xterm ↔ websocket (this wires both onData and onmessage)
-          if (terminal.current) {
-          terminal.current!.loadAddon(new AttachAddon(ws.current!));
+          if (terminal.current && ws.current) {
+            terminal.current!.loadAddon(new AttachAddon(ws.current!));
+          }
         };
 
         ws.current.onerror = (error) => {
