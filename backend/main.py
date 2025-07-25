@@ -117,8 +117,7 @@ def get_or_create_container(user_id: str):
                             except Exception as e:
                                 print(f"Error checking container responsiveness: {e}")
                         else:
-                            print(f"Container {container.id} status: {container.status} (attempt {attempt + 1}/{max_attempts})")    
-                        
+                            print(f"Container {container.id} status: {container.status} (attempt {attempt + 1}/{max_attempts})")
                         # If container exited, check logs
                         if container.status == "exited":
                             logs = container.logs().decode('utf-8')
@@ -150,9 +149,9 @@ def get_or_create_container(user_id: str):
     try:
         image_name = get_platform_specific_image("ehcaw/lsclear")
         container = client.containers.run(
-            image_name,
-            # "ehcaw/lsclear:latest",
-            platform="linux/amd64" if "amd64" in image_name else "linux/arm64",
+            # image_name,
+            "ehcaw/lsclear:latest",
+            # platform="linux/amd64" if "amd64" in image_name else "linux/arm64",
             command=["tail", "-f", "/dev/null"],  # Keep container running
             tty=True,
             detach=True,
@@ -169,7 +168,8 @@ def get_or_create_container(user_id: str):
                 "Interval": 30000000000,  # 30 seconds
                 "Timeout": 10000000000,   # 10 seconds
                 "Retries": 3
-            }
+            },
+
         )
         
         # Wait a moment for the container to start
@@ -195,11 +195,6 @@ def get_or_create_container(user_id: str):
         print(f"Successfully created container {container.id} for user {user_id}")
     
         try:
-            # Determine API URL based on environment
-            if os.getenv('ENVIRONMENT') == 'development':
-                api_url = "http://host.docker.internal:8000"  # Local development
-            else:
-                api_url = "https://api.documix.xyz"  # Production
             # Set a simple prompt
             container.exec_run("echo \"export PS1='[\\u@\\h \\W]\\\\$ '\" > /root/.bashrc", tty=True)
             # Add some useful aliases
@@ -209,7 +204,7 @@ def get_or_create_container(user_id: str):
             container.exec_run(
                 f'''bash -lc 'cat <<"EOF" >> /root/.bashrc
             # ---- IDE sync-hook ----
-            export IDE_API="{api_url}"
+            export IDE_API="https://api.documix.xyz"
             export USER_ID="{user_id}"
             export IDE_USER="$USER_ID"
 
@@ -221,7 +216,7 @@ def get_or_create_container(user_id: str):
                 curl -s -X POST "$IDE_API/api/fs-event" \\
                     -H "Content-Type: application/json" \\
                     -d "{{\\"user_id\\":\\"$IDE_USER\\",\\"cmd\\":\\"$cmd\\",\\"cwd\\":\\"$cwd\\"}}" \\
-                    >/dev/null 2>&1
+                    >>/tmp/fs_event.log 2>&1
                 ;;
             esac
             }}
@@ -468,7 +463,7 @@ async def fs_event(evt: FSEvent):
                     JOIN node_tree nt ON n.parent_id = nt.id
                     WHERE n.user_id = %s
                 )
-                SELECT id, is_dir FROM node_tree
+                SELECT id, is_dir FROM node_tree 
             """, (evt.user_id, rel_path, rel_path, evt.user_id))
             
             nodes_to_delete = cursor.fetchall()
