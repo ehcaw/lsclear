@@ -150,9 +150,9 @@ def get_or_create_container(user_id: str):
     try:
         image_name = get_platform_specific_image("ehcaw/lsclear")
         container = client.containers.run(
-            # image_name,
-            "ehcaw/lsclear:latest",
-            # platform="linux/amd64" if "amd64" in image_name else "linux/arm64",
+            image_name,
+            # "ehcaw/lsclear:latest",
+            platform="linux/amd64" if "amd64" in image_name else "linux/arm64",
             command=["tail", "-f", "/dev/null"],  # Keep container running
             tty=True,
             detach=True,
