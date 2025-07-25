@@ -18,9 +18,10 @@ export async function GET(request: Request) {
     }
 
     const data = await sql`
-      SELECT structure 
-      FROM file_structures
+      SELECT * 
+      FROM fs_nodes
       WHERE user_id = ${userId}
+      ORDER BY created_at DESC
     `;
 
     return NextResponse.json({ data });
@@ -33,20 +34,23 @@ export async function GET(request: Request) {
   }
 }
 
+// Update the POST route
 export async function POST(request: Request) {
   try {
-    const { user_id, name, structure } = await request.json();
+    const { user_id, name, content, is_dir = false, parent_id = null } = await request.json();
 
-    if (!user_id || !name || !structure) {
+    if (!user_id || !name) {
       return NextResponse.json(
-        { error: "Missing required fields: user_id, name, and structure are required" },
+        { error: "Missing required fields: user_id and name are required" },
         { status: 400 },
       );
     }
 
     const data = await sql`
-      INSERT INTO file_structures (user_id, name, structure, created_at)
-      VALUES (${user_id}, ${name}, ${structure}, ${new Date().toISOString()})
+      INSERT INTO fs_nodes 
+        (user_id, name, content, is_dir, parent_id, created_at, updated_at)
+      VALUES 
+        (${user_id}, ${name}, ${content || null}, ${is_dir}, ${parent_id}, NOW(), NOW())
       RETURNING *
     `;
 

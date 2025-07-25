@@ -227,7 +227,7 @@ function findFirstFile(nodes: FileNode[]): FileNode | undefined {
 
 export function getFullPath(fileId: number, fileMap: Record<number, FileNode>): string { 
   const segments: string[] = [];
-  const fileNode = Object.values(fileMap).find(node => node.id === fileId);
+  const fileNode = Object.values(fileMap).find(node => node.id === fileId) || fileMap[fileId];
   if (!fileNode) {
     throw new Error(`File with ID ${fileId} not found`);
   }

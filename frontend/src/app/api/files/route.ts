@@ -23,7 +23,7 @@ export async function GET(request: Request) {
     }
 
     const result = await pool.query(
-      `SELECT * FROM files WHERE user_id = $1 ORDER BY created_at DESC`,
+      `SELECT * FROM fs_nodes WHERE user_id = $1 ORDER BY created_at DESC`,
       [userId],
     );
 
@@ -51,7 +51,7 @@ export async function POST(request: Request) {
     }
 
     const result = await pool.query(
-      `INSERT INTO files (name, language, content, user_id, created_at, updated_at)
+      `INSERT INTO fs_nodes (name, language, content, user_id, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $5)
        RETURNING *`,
       [name, language, content, userId, new Date().toISOString()],

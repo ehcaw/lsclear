@@ -137,9 +137,8 @@ def get_or_create_container(user_id: str):
                 containers[0].remove(force=True)
             except:
                 pass
-
-    # Create new container if none exists or if there was an error with the existing one
-    print(f"Creating new container for user {user_id}")
+    
+    # Make a new container
     try:
         image_name = get_platform_specific_image("ehcaw/lsclear")
         container = client.containers.run(
@@ -185,7 +184,44 @@ def get_or_create_container(user_id: str):
             raise Exception(f"Container failed to start. Status: {container.status}")
             
         print(f"Successfully created container {container.id} for user {user_id}")
-        return container
+    
+        try:
+            # Set a simple prompt
+            container.exec_run("echo \"export PS1='[\\u@\\h \\W]\\\\$ '\" > /root/.bashrc", tty=True)
+            # Add some useful aliases
+            container.exec_run("echo \"alias ll='ls -la'\" >> /root/.bashrc", tty=True)
+            # Set proper permissions
+            container.exec_run("chmod 644 /root/.bashrc", tty=True)
+            container.exec_run(
+                f'''bash -lc 'cat <<"EOF" >> /root/.bashrc
+            # ---- IDE sync-hook ----
+            export IDE_API="http://host.docker.internal:8000"
+            export USER_ID="{user_id}"
+            export IDE_USER="$USER_ID"
+
+            preexec() {{
+            local cmd="$BASH_COMMAND"
+            local cwd="$(pwd -P)"           # absolute working dir
+            case "$cmd" in
+                touch*|mkdir*|rm*|mv*|cp*|cd*)   # include cd so backend can track dirs
+                curl -s -X POST "$IDE_API/api/fs-event" \\
+                    -H "Content-Type: application/json" \\
+                    -d "{{\\"user_id\\":\\"$IDE_USER\\",\\"cmd\\":\\"$cmd\\",\\"cwd\\":\\"$cwd\\"}}" \\
+                    >/dev/null 2>&1
+                ;;
+            esac
+            }}
+            trap preexec DEBUG
+            # ------------------------
+            EOF
+            ' ''',
+                tty=True
+            )
+            container.exec_run("source ~/.bashrc", tty=True)
+            return container
+        except Exception as e:
+            print(f"Warning: Failed to set up bashrc: {e}")
+            return container
         
     except Exception as e:
         print(f"Error creating container: {e}")
@@ -246,9 +282,7 @@ async def create_session(user_data: dict):
 
 @app.post("/api/fs-event")
 async def fs_event(evt: FSEvent):
-    print("Received:", evt)
-    
-    
+        
     action, *args = shlex.split(evt.cmd)        # args is now a **list**
     if not args:                                # user just hit <Enter>
         return {"ok": True}
@@ -260,14 +294,14 @@ async def fs_event(evt: FSEvent):
             raise HTTPException(400, "Path escapes workspace")
         return full
 
-    # ── 3. grab the user’s running container ────────────────────────
+    # ── grab the user’s running container ────────────────────────
     container_id = user_containers.get(evt.user_id)
     if not container_id:
         raise HTTPException(404, "No live container for user")
 
     fsm = FileSystemManager(evt.user_id, container_id, base_path="/workspace")
 
-    # ── 4. handle each verb ─────────────────────────────────────────
+    # ── handle each verb ─────────────────────────────────────────
     try:
         if action == "touch":
             path = _abs(args[0])

@@ -147,7 +147,7 @@ export default function Home() {
   };
 
   const Breadcrumbs = () => {
-    const path = currentFile ? getFullPath(currentFile.id, fileTree).split('/') : [];
+    const path = currentFile ? getFullPath(currentFile.id, fileMap).split('/') : [];
     return (
       <div className="flex items-center text-sm overflow-x-auto">
         {path.map((part, i) => (

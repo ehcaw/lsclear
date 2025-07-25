@@ -53,23 +53,29 @@ export function ProjectStructure({ data, onSelectChange }: ProjectStructureProps
   }, [onSelectChange]);
 
   const buildFileMap = useCallback((nodes: FileNode[]): Record<string, FileNode> => {
-    const map: Record<string, FileNode> = {};
-    
-    const processNode = (node: FileNode, currentPath: string = '') => {
-      const nodePath = currentPath ? `${currentPath}/${node.name}` : node.name;
-      
-      if (!node.is_dir) {
-        map[node.id] = node;
-      }
-      
-      if (node.children) {
-        node.children.forEach(child => processNode(child, nodePath));
-      }
+    type FileMap = {
+      [key: string]: FileNode;
     };
+    const fileMap: FileMap = {};
+  
+    function processNode(node: FileNode) {
+      // Add the current node to the map
+      fileMap[node.id.toString()] = {
+        ...node,
+        // Ensure children is always an array
+        children: node.children ? [...node.children] : []
+      };
+      
+      // Process children if they exist
+      if (node.children) {
+        node.children.forEach(child => processNode(child));
+      }
+    }
     
+    // Process each root node
     nodes.forEach(node => processNode(node));
-    setFileMap(map);
-    return map;
+    setFileMap(fileMap)
+    return fileMap;
   }, [setFileMap]);
 
 useEffect(() => {
