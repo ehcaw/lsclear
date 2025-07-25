@@ -229,13 +229,9 @@ export function getFullPath(fileId: number, fileMap: Record<number, FileNode>): 
   const segments: string[] = [];
   const fileNode = Object.values(fileMap).find(node => node.id === fileId) || fileMap[fileId];
   if (!fileNode) {
-    throw new Error(`File with ID ${fileId} not found`);
+    return "";
   }
   let current = fileNode;
-
-  if (!current) {
-    throw new Error(`File with ID ${fileId} not found`);
-  }
 
   // Walk up until root (parentId === null)
   while (current) {
@@ -243,9 +239,7 @@ export function getFullPath(fileId: number, fileMap: Record<number, FileNode>): 
     if (current.parent_id === null) break;
     const parent = fileMap[current.parent_id];
     if (!parent) {
-      throw new Error(
-        `Parent with ID ${current.parent_id} not found for file ${current.id}`
-      );
+      return "";
     }
     current = parent;
   }
