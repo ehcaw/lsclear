@@ -53,8 +53,16 @@ export function Sidebar({ userId, onSelectChange, className }: SidebarProps) {
       const ws = new WebSocket(`${wsBaseUrl}${key}`);
 
       ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        next(null, data);
+        if (event.data === 'ping' || event.data === 'pong') {
+          return; // Ignore keepalive messages
+        }
+        try {
+          const data = JSON.parse(event.data);
+          next(null, data);
+        } catch (error) {
+          console.error("Failed to parse WebSocket message:", error);
+          next(error);
+        }
       };
 
       ws.onerror = (error) => { 

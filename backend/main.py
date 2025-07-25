@@ -12,7 +12,6 @@ from pydantic import BaseModel
 import shlex
 from db_update_manager import ws_manager, notify_file_update
 import platform
-import textwrap
 
 class FSEvent(BaseModel):
     user_id: str
@@ -22,7 +21,7 @@ class FSEvent(BaseModel):
 class FileUpdate(BaseModel):
     content: str
     userId: str
-    filePath: str = None
+    filePath: str = ""
 
 app = FastAPI()
 client = docker.from_env()
@@ -44,10 +43,10 @@ user_containers = {}  # Maps user_id to container_id
 
 def bash(c, cmd):
     """Run a single Bash command inside the container and print its result."""
-    code, output = c.exec_run(["bash", "-lc", cmd], demux=True)
-    if code != 0:
-        print("== Bash command failed ==")
-    return code, output
+    full_command = f'/bin/bash -i -c "source ~/.bashrc; {cmd}"'
+    result = c.exec_run(full_command, tty=True, stdin=True)
+    stdout = result.output.decode('utf-8') if result.output else ""
+    return stdout, ""
 
 @app.get("/test")
 async def test():
@@ -95,6 +94,7 @@ def get_or_create_container(user_id: str):
         )
 
         # If container exists and is running, return it
+        import time
         if containers:
             container = containers[0]
             if container.status != 'running':
@@ -123,14 +123,14 @@ def get_or_create_container(user_id: str):
                             logs = container.logs().decode('utf-8')
                             print(f"Container {container.id} exited with logs:\n{logs}")
                             raise Exception(f"Container exited with status: {container.status}")
-                            
+
                         time.sleep(1)
                     else:
                         # If we get here, container didn't start in time
                         logs = container.logs().decode('utf-8')
                         print(f"Container {container.id} failed to start. Logs:\n{logs}")
                         container.remove(force=True)
-                        raise Exception(f"Container failed to start within {max_attempts} seconds")
+                        raise Exception(f"Container failed to start within 30 seconds")
                 except Exception as e:
                     print(f"Error starting container {container.id}: {e}")
                     container.remove(force=True)
@@ -144,7 +144,7 @@ def get_or_create_container(user_id: str):
                 containers[0].remove(force=True)
             except:
                 pass
-    
+
     # Make a new container
     try:
         image_name = get_platform_specific_image("ehcaw/lsclear")
@@ -171,9 +171,8 @@ def get_or_create_container(user_id: str):
             },
 
         )
-        
+
         # Wait a moment for the container to start
-        import time
         for attempt in range(30):
             container.reload()
             if container.status == "running":
@@ -191,9 +190,9 @@ def get_or_create_container(user_id: str):
                 print(f"Container {container.id} status: {container.status} (attempt {attempt + 1}/{max_attempts})")
         if container.status != 'running':
             raise Exception(f"Container failed to start. Status: {container.status}")
-            
+
         print(f"Successfully created container {container.id} for user {user_id}")
-    
+
         try:
             # Set a simple prompt
             container.exec_run("echo \"export PS1='[\\u@\\h \\W]\\\\$ '\" > /root/.bashrc", tty=True)
@@ -201,37 +200,35 @@ def get_or_create_container(user_id: str):
             container.exec_run("echo \"alias ll='ls -la'\" >> /root/.bashrc", tty=True)
             # Set proper permissions
             container.exec_run("chmod 644 /root/.bashrc", tty=True)
-            container.exec_run(
-                f'''bash -lc 'cat <<"EOF" >> /root/.bashrc
-            # ---- IDE sync-hook ----
-            export IDE_API="https://api.documix.xyz"
-            export USER_ID="{user_id}"
-            export IDE_USER="$USER_ID"
-
-            preexec() {{
-            local cmd="$BASH_COMMAND"
-            local cwd="$(pwd -P)"           # absolute working dir
-            case "$cmd" in
-                touch*|mkdir*|rm*|mv*|cp*|cd*)   # include cd so backend can track dirs
-                curl -s -X POST "$IDE_API/api/fs-event" \\
-                    -H "Content-Type: application/json" \\
-                    -d "{{\\"user_id\\":\\"$IDE_USER\\",\\"cmd\\":\\"$cmd\\",\\"cwd\\":\\"$cwd\\"}}" \\
-                    >>/tmp/fs_event.log 2>&1
-                ;;
-            esac
-            }}
-            trap preexec DEBUG
-            # ------------------------
-            EOF
-            ' ''',
-                tty=True
-            )
+            container.exec_run([
+                'bash', '-c', f'''
+            echo '# ---- IDE sync-hook ----' >> /root/.bashrc
+            echo 'export IDE_API="https://api.documix.xyz"' >> /root/.bashrc
+            echo 'export USER_ID="{user_id}"' >> /root/.bashrc
+            echo 'export IDE_USER="$USER_ID"' >> /root/.bashrc
+            echo '' >> /root/.bashrc
+            echo 'preexec() {{' >> /root/.bashrc
+            echo '    local cmd="$BASH_COMMAND"' >> /root/.bashrc
+            echo '    local cwd="$(pwd -P)"' >> /root/.bashrc
+            echo '    case "$cmd" in' >> /root/.bashrc
+            echo '        touch*|mkdir*|rm*|mv*|cp*|cd*)' >> /root/.bashrc
+            echo '            curl -s -X POST "$IDE_API/api/fs-event" \\' >> /root/.bashrc
+            echo '                -H "Content-Type: application/json" \\' >> /root/.bashrc
+            echo '                -d "{{\\"user_id\\":\\"$IDE_USER\\",\\"cmd\\":\\"$cmd\\",\\"cwd\\":\\"$cwd\\"}}" \\' >> /root/.bashrc
+            echo '                >>/tmp/fs_event.log 2>&1' >> /root/.bashrc
+            echo '            ;;' >> /root/.bashrc
+            echo '    esac' >> /root/.bashrc
+            echo '}}' >> /root/.bashrc
+            echo 'trap preexec DEBUG' >> /root/.bashrc
+            echo '# ------------------------' >> /root/.bashrc
+            '''
+            ], tty=True)
             container.exec_run("source ~/.bashrc", tty=True)
             return container
         except Exception as e:
             print(f"Warning: Failed to set up bashrc: {e}")
             return container
-        
+
     except Exception as e:
         print(f"Error creating container: {e}")
         # Clean up any partially created container
@@ -272,7 +269,7 @@ async def create_session(user_data: dict):
         # prepopulate file structure into the container
         file_manager = FileSystemManager(user_id=user_id, container_id=container.id, base_path="/workspace")
         file_manager.initialize_file_structure()
-        
+
 
         return {
             "session_id": sid,
@@ -291,7 +288,6 @@ async def create_session(user_data: dict):
 
 @app.post("/api/fs-event")
 async def fs_event(evt: FSEvent):
-        
     action, *args = shlex.split(evt.cmd)        # args is now a **list**
     if not args:                                # user just hit <Enter>
         return {"ok": True}
@@ -318,12 +314,12 @@ async def fs_event(evt: FSEvent):
             # Create parent directories if they don't exist
             parent_path = os.path.dirname(rel_path)
             parent_id = None
-            
+
             if parent_path and parent_path != '.':
                 # Find or create parent directory
                 parent_parts = parent_path.split(os.path.sep)
                 current_parent_id = None
-                
+
                 for part in parent_parts:
                     try:
                         # Try to find existing parent
@@ -339,7 +335,7 @@ async def fs_event(evt: FSEvent):
                                 "SELECT id FROM fs_nodes WHERE user_id = %s AND parent_id = %s AND name = %s",
                                 (evt.user_id, current_parent_id, part)
                             )
-                            
+
                         result = cursor.fetchone()
                         if result:
                             current_parent_id = result[0]
@@ -352,13 +348,13 @@ async def fs_event(evt: FSEvent):
                                 parent_id=current_parent_id
                             )
                             current_parent_id = new_dir['id']
-                            
+
                     except Exception as e:
                         print(f"Error creating parent directories: {e}")
                         raise
-                    
+
                     parent_id = current_parent_id
-            
+
             # Create the file
             file_name = os.path.basename(rel_path)
             try:
@@ -376,20 +372,20 @@ async def fs_event(evt: FSEvent):
                     pass  # Just continue, the file is already there
                 else:
                     raise
-                    
+
         elif action == "mkdir":
             path = _abs(args[0])
             rel_path = os.path.relpath(path, "/workspace")
             parent_path = os.path.dirname(rel_path)
             dir_name = os.path.basename(rel_path)
             parent_id = None
-            
+
             # Handle parent directories
             if parent_path and parent_path != '.':
                 # Find or create parent directories
                 parent_parts = parent_path.split(os.path.sep)
                 current_parent_id = None
-                
+
                 for part in parent_parts:
                     try:
                         if current_parent_id is None:
@@ -404,7 +400,7 @@ async def fs_event(evt: FSEvent):
                                 "SELECT id FROM fs_nodes WHERE user_id = %s AND parent_id = %s AND name = %s",
                                 (evt.user_id, current_parent_id, part)
                             )
-                            
+
                         result = cursor.fetchone()
                         if result:
                             current_parent_id = result[0]
@@ -417,13 +413,13 @@ async def fs_event(evt: FSEvent):
                                 parent_id=current_parent_id
                             )
                             current_parent_id = new_dir['id']
-                            
+
                     except Exception as e:
                         print(f"Error creating parent directories: {e}")
                         raise
-                    
+
                     parent_id = current_parent_id
-            
+
             # Create the directory
             try:
                 fsm.db.create_node(
@@ -439,7 +435,7 @@ async def fs_event(evt: FSEvent):
                     pass
                 else:
                     raise
-                    
+
         elif action == "rm":
             path = _abs(args[0])
             rel_path = os.path.relpath(path, "/workspace")
@@ -449,37 +445,35 @@ async def fs_event(evt: FSEvent):
                 WITH RECURSIVE node_tree AS (
                     -- Start with the target node
                     SELECT id, parent_id, name, is_dir
-                    FROM fs_nodes 
-                    WHERE user_id = %s 
+                    FROM fs_nodes
+                    WHERE user_id = %s
                     AND name = %s
                     AND parent_id IS NULL
                     AND %s = name
-                    
                     UNION ALL
-                    
                     -- Recursively find all children
                     SELECT n.id, n.parent_id, n.name, n.is_dir
                     FROM fs_nodes n
                     JOIN node_tree nt ON n.parent_id = nt.id
                     WHERE n.user_id = %s
                 )
-                SELECT id, is_dir FROM node_tree 
+                SELECT id, is_dir FROM node_tree
             """, (evt.user_id, rel_path, rel_path, evt.user_id))
-            
+
             nodes_to_delete = cursor.fetchall()
-            
+
             if not nodes_to_delete:
                 # Try to find the node with parent path
                 path_parts = rel_path.split(os.path.sep)
                 if len(path_parts) > 1:
                     parent_path = os.path.sep.join(path_parts[:-1])
                     file_name = path_parts[-1]
-                    
+
                     # Find parent ID
                     parent_id = None
                     parent_parts = parent_path.split(os.path.sep)
                     current_parent_id = None
-                    
+
                     for part in parent_parts:
                         if current_parent_id is None:
                             cursor.execute(
@@ -491,128 +485,32 @@ async def fs_event(evt: FSEvent):
                                 "SELECT id FROM fs_nodes WHERE user_id = %s AND parent_id = %s AND name = %s",
                                 (evt.user_id, current_parent_id, part)
                             )
-                            
+
                         result = cursor.fetchone()
                         if not result:
                             raise HTTPException(404, "File or directory not found")
                         current_parent_id = result[0]
-                    
+
                     parent_id = current_parent_id
-                    
+
                     # Now find the node with this parent
                     cursor.execute(
                         "SELECT id, is_dir FROM fs_nodes WHERE user_id = %s AND parent_id = %s AND name = %s",
                         (evt.user_id, parent_id, file_name)
                     )
                     nodes_to_delete = cursor.fetchall()
-            
+
             if not nodes_to_delete:
                 raise HTTPException(404, "File or directory not found")
-                
+
             # Delete from database (cascading delete will handle children)
             for node_id, is_dir in nodes_to_delete:
                 fsm.db.delete_node(evt.user_id, node_id)
-            
+
             await notify_file_update(evt.user_id, "delete", path)
-            
-        elif action == "mv" and len(args) == 2:
-            src = _abs(args[0])
-            dest = _abs(args[1])
-            
-            # Get source path relative to workspace
-            src_rel = os.path.relpath(src, "/workspace")
-            dest_rel = os.path.relpath(dest, "/workspace")
-            
-            # Find source node in database
-            cursor = fsm.db.conn.cursor()
-            
-            # First try to find the node with the full path
-            cursor.execute("""
-                WITH RECURSIVE node_path AS (
-                    -- Start with the target node
-                    SELECT id, parent_id, name, is_dir, ARRAY[name] as path
-                    FROM fs_nodes 
-                    WHERE user_id = %s AND parent_id IS NULL
-                    
-                    UNION ALL
-                    
-                    -- Recursively find all children
-                    SELECT f.id, f.parent_id, f.name, f.is_dir, np.path || f.name
-                    FROM fs_nodes f
-                    JOIN node_path np ON f.parent_id = np.id
-                    WHERE f.user_id = %s
-                )
-                SELECT id, is_dir FROM node_path 
-                WHERE array_to_string(path, '/') = %s
-            """, (evt.user_id, evt.user_id, src_rel))
-            
-            result = cursor.fetchone()
-            
-            if not result:
-                # If not found with full path, try to find by name (last resort)
-                src_name = os.path.basename(src_rel)
-                cursor.execute(
-                    "SELECT id, is_dir FROM fs_nodes WHERE user_id = %s AND name = %s",
-                    (evt.user_id, src_name)
-                )
-                result = cursor.fetchone()
-                if not result:
-                    raise HTTPException(404, "Source file or directory not found")
-            
-            node_id, is_dir = result
-            
-            # Handle destination parent directory
-            dest_parent_rel = os.path.dirname(dest_rel)
-            dest_name = os.path.basename(dest_rel)
-            
-            dest_parent_id = None
-            if dest_parent_rel and dest_parent_rel != '.':
-                # Find or create parent directories
-                parent_parts = dest_parent_rel.split(os.path.sep)
-                current_parent_id = None
-                
-                for part in parent_parts:
-                    try:
-                        if current_parent_id is None:
-                            cursor.execute(
-                                "SELECT id FROM fs_nodes WHERE user_id = %s AND parent_id IS NULL AND name = %s",
-                                (evt.user_id, part)
-                            )
-                        else:
-                            cursor.execute(
-                                "SELECT id FROM fs_nodes WHERE user_id = %s AND parent_id = %s AND name = %s",
-                                (evt.user_id, current_parent_id, part)
-                            )
-                            
-                        result = cursor.fetchone()
-                        if result:
-                            current_parent_id = result[0]
-                        else:
-                            # Create the directory if it doesn't exist
-                            new_dir = fsm.db.create_node(
-                                user_id=evt.user_id,
-                                name=part,
-                                is_dir=True,
-                                parent_id=current_parent_id
-                            )
-                            current_parent_id = new_dir['id']
-                            
-                    except Exception as e:
-                        print(f"Error creating parent directories: {e}")
-                        raise
-                    
-                    dest_parent_id = current_parent_id
-            
-            # Update the node in the database
-            cursor.execute(
-                "UPDATE fs_nodes SET name = %s, parent_id = %s, updated_at = NOW() WHERE id = %s",
-                (dest_name, dest_parent_id, node_id)
-            )
-            
-            await notify_file_update(evt.user_id, "move", src, dest)
-            
+
         return {"ok": True}
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -633,7 +531,7 @@ async def get_file(sid: str, name: str):
         exit_code, output = bash(container, f"cat /workspace/{name}")
         if exit_code != 0:
             raise HTTPException(status_code=404, detail="File not found")
-        return {"content": output.decode('utf-8')}
+        return {"content": output}
     except Exception as e:
         print(f"Error getting file: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -659,19 +557,19 @@ async def update_file(file_id: str, update: FileUpdate):
                 )
                 SELECT path FROM file_path WHERE id = %s;
             """, (file_id, update.userId, file_id))
-            
+
             result = cursor.fetchone()
             if not result:
                 raise HTTPException(status_code=404, detail="File not found or access denied")
-            
+
             # The query builds the path in reverse, so we split and reverse it
             path_parts = result[0].split('/')
             path_parts.reverse()
             full_path = "/".join(path_parts)
-            
+
             # Update the file content in the database
             cursor.execute("""
-                UPDATE fs_nodes 
+                UPDATE fs_nodes
                 SET content = %s, updated_at = NOW()
                 WHERE id = %s AND user_id = %s AND NOT is_dir
             """, (update.content, file_id, update.userId))
@@ -681,34 +579,34 @@ async def update_file(file_id: str, update: FileUpdate):
         container_id = user_containers.get(update.userId)
         if not container_id:
             raise HTTPException(status_code=404, detail="No active container found for user")
-        
+
         container = client.containers.get(container_id)
         if container.status != 'running':
             container.start()
 
         # --- Safely write file to container using a tar stream ---
-        
+
         # In-memory tarfile
         pw_tarstream = BytesIO()
         pw_tar = tarfile.TarFile(fileobj=pw_tarstream, mode='w')
-        
+
         # Encode content to bytes
         content_bytes = update.content.encode('utf-8')
-        
+
         tarinfo = tarfile.TarInfo(name=full_path)
         tarinfo.size = len(content_bytes)
-        
+
         # Add file to tar stream
         pw_tar.addfile(tarinfo, BytesIO(content_bytes))
-        
+
         pw_tar.close()
         pw_tarstream.seek(0)
-        
+
         # Put the tar stream into the container's workspace
         container.put_archive(path='/workspace', data=pw_tarstream)
 
         return {"status": "success", "message": "File updated successfully"}
-            
+
     except docker.errors.NotFound:
         if update.userId in user_containers:
             del user_containers[update.userId]
@@ -930,7 +828,7 @@ async def terminal_ws(ws: WebSocket, sid: str):
         # Start both tasks
         await asyncio.gather(
             read_from_container(),
-            handle_messages(),  
+            handle_messages(),
             return_exceptions=True
         )
 
@@ -963,7 +861,7 @@ async def db_update_websocket(websocket: WebSocket, user_id: str):
         # Accept the WebSocket connection first
         await websocket.accept()
         print(f"WebSocket connection accepted for user {user_id}")
-        
+
         # Connect to the WebSocket manager
         try:
             await ws_manager.connect(user_id, websocket)
@@ -972,7 +870,7 @@ async def db_update_websocket(websocket: WebSocket, user_id: str):
             print(f"Error registering WebSocket connection: {e}")
             await websocket.close(code=1008, reason="Internal server error")
             return
-        
+
         # Keep the connection alive
         while True:
             try:
@@ -981,22 +879,22 @@ async def db_update_websocket(websocket: WebSocket, user_id: str):
                 # Handle ping/pong for keepalive
                 if data == "ping":
                     await websocket.send_text("pong")
-                
+
             except asyncio.TimeoutError:
                 # Send ping to keep connection alive
                 try:
                     await websocket.send_text("ping")
                 except:
                     break
-                    
+
             except WebSocketDisconnect:
                 print(f"Client {user_id} disconnected")
                 break
-                
+
             except Exception as e:
                 print(f"WebSocket error for user {user_id}: {e}")
                 break
-                
+
     except Exception as e:
         print(f"Unexpected error in WebSocket for user {user_id}: {e}")
     finally:
