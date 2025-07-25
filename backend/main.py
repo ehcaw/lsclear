@@ -41,8 +41,13 @@ neon_db = NeonDB()
 session_containers = {}
 user_containers = {}  # Maps user_id to container_id
 
-def bash(container, cmd):
-    return container.exec_run(["bash", "-lc", cmd], tty=True)
+def bash(c, cmd):
+    """Run a single Bash command inside the container and print its result."""
+    code, (out, err) = c.exec_run(["bash", "-lc", cmd], demux=True)
+    if code != 0:
+        print("== Bash command failed ==")
+        print(err.decode())
+    return code, out, err
 
 @app.get("/test")
 async def test():
@@ -190,36 +195,38 @@ def get_or_create_container(user_id: str):
         print(f"Successfully created container {container.id} for user {user_id}")
     
         try:
-            # Set a simple prompt
-            bash(container, "echo \"export PS1='[\\u@\\h \\W]\\\\$ '\" > /root/.bashrc")
-            # Add some useful aliases
-            bash(container, "echo \"alias ll='ls -la'\" >> /root/.bashrc")
             # Set proper permissions
-            bash(container, "chmod 644 /root/.bashrc")
-            bash(container,
-                f'''bash -lc 'cat <<"EOF" >> /root/.bashrc
-            # ---- IDE sync-hook ----
-            export IDE_API="http://host.docker.internal:8000"
-            export USER_ID="{user_id}"
-            export IDE_USER="$USER_ID"
+            bash(container, "sed -i '/^# ---- IDE sync-hook ----/,/^# ------------------------/d' /root/.bashrc")
+    
+            # Create hook as a separate file (most reliable)
+            hook_content = f"""export IDE_API="http://host.docker.internal:8000"
+                export USER_ID="{user_id}"
+                export IDE_USER="$USER_ID"
 
-            preexec() {{
-            local cmd="$BASH_COMMAND"
-            local cwd="$(pwd -P)"           # absolute working dir
-            case "$cmd" in
-                touch*|mkdir*|rm*|mv*|cp*|cd*)   # include cd so backend can track dirs
-                curl -s -X POST "$IDE_API/api/fs-event" \\
-                    -H "Content-Type: application/json" \\
-                    -d "{{\\"user_id\\":\\"$IDE_USER\\",\\"cmd\\":\\"$cmd\\",\\"cwd\\":\\"$cwd\\"}}" \\
-                    >/dev/null 2>&1
-                ;;
-            esac
-            }}
-            trap preexec DEBUG
-            # ------------------------
-            EOF
-            ' '''
-            )
+                preexec() {{
+                    local cmd="$BASH_COMMAND"
+                    local cwd="$(pwd -P)"
+                    case "$cmd" in
+                        touch*|mkdir*|rm*|mv*|cp*|cd*)
+                            curl -s -X POST "$IDE_API/api/fs-event" \\
+                                -H 'Content-Type: application/json' \\
+                                -d '{{"user_id":"'"$IDE_USER"'","cmd":"'"$cmd"'","cwd":"'"$cwd"'"}}' \\
+                                >/dev/null 2>&1 &
+                            ;;
+                    esac
+                }}
+                trap preexec DEBUG"""
+    
+            # Write to separate file and source it
+            bash(container, f'cat > /root/.ide_hook.sh << "EOF"\n{hook_content}\nEOF')
+            bash(container, 'chmod +x /root/.ide_hook.sh')
+            bash(container, 'echo "source /root/.ide_hook.sh" >> /root/.bashrc')
+            
+            # Test it worked
+            code, output, error = bash(container, 'bash -c "source /root/.bashrc && type preexec"')
+            if code != 0:
+                raise Exception(f"Failed to set up bashrc: {error.decode()}")
+
             bash(container, 'export BASH_ENV=/root/.bashrc')
             bash(container, "source ~/.bashrc")
 
