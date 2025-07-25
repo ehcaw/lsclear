@@ -1,8 +1,7 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Fragment } from "react";
 import dynamic from 'next/dynamic';
 import { HelpDialog } from "@/components/editor/help";
-
 // Import the dynamic editor component
 const MonacoEditor = dynamic(
   () => import('@/components/editor/dynamic-editor'),
@@ -14,14 +13,13 @@ import {
 Save,
 FileCode,
 User,
+ChevronRight
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { createAuthClient } from "better-auth/react";
 const { useSession } = createAuthClient();
 import { Button } from "@/components/ui/button";
-import { Card, CardContent} from "@/components/ui/card";
 import { Tabs, TabsContent, } from "@/components/ui/tabs";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Tooltip,
   TooltipContent,
@@ -148,6 +146,22 @@ export default function Home() {
     return undefined;
   };
 
+  const Breadcrumbs = () => {
+    const path = currentFile ? getFullPath(currentFile.id, fileTree).split('/') : [];
+    return (
+      <div className="flex items-center text-sm overflow-x-auto">
+        {path.map((part, i) => (
+          <Fragment key={i}>
+            {i > 0 && <ChevronRight className="h-3 w-3 mx-1.5 text-muted-foreground" />}
+            <span className="whitespace-nowrap text-ellipsis overflow-hidden">
+              {part}
+            </span>
+          </Fragment>
+        ))}
+      </div>
+    );
+  };
+
 
   // Listen for messages from the iframe
   useEffect(() => {
@@ -235,7 +249,7 @@ export default function Home() {
                 <div className="flex items-center space-x-3 min-w-0">
                   <FileCode className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
                   <div className="flex items-center space-x-4 min-w-0">
-                    <span className="text-sm font-medium text-foreground truncate">{currentFile.name}</span>
+                    <span className="text-sm font-medium text-foreground truncate">{Breadcrumbs()}</span>
                     <div className="h-4 w-px bg-border mx-1 flex-shrink-0"></div>
                     <div className="flex items-center flex-shrink-0">
                       {savingState === 'saving' && (

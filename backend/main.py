@@ -247,13 +247,12 @@ async def create_session(user_data: dict):
 @app.post("/api/fs-event")
 async def fs_event(evt: FSEvent):
     print("Received:", evt)
-
-    # ── 1. split once ───────────────────────────────────────────────
+    
+    
     action, *args = shlex.split(evt.cmd)        # args is now a **list**
     if not args:                                # user just hit <Enter>
         return {"ok": True}
 
-    # ── 2. make paths absolute & safe ───────────────────────────────
     def _abs(p: str) -> str:
         p = p if os.path.isabs(p) else os.path.join(evt.cwd, p)
         full = os.path.normpath(p)
@@ -964,38 +963,3 @@ async def db_update_websocket(websocket: WebSocket, user_id: str):
             print(f"WebSocket connection closed for user {user_id}")
         except Exception as e:
             print(f"Error during WebSocket cleanup for user {user_id}: {e}")
-
-@app.post("/run")
-async def run(user_data: dict):
-    user_id = user_data.get('user_id')
-    file_path = user_data.get('file_path')  # Full path from frontend
-    working_dir = user_data.get('working_dir', '/workspace')  # Default to /workspace if not provided
-    
-    if not user_id:
-        raise HTTPException(status_code=400, detail="user_id is required")
-    
-    try: 
-        container_id = user_containers[user_id]
-        container = client.containers.get(container_id)
-        
-        # Get the directory of the file being executed
-        file_dir = os.path.dirname(file_path) if file_path else working_dir
-        filename = os.path.basename(file_path) if file_path else 'main.py'
-        
-        # Execute the command in the file's directory
-        cmd = f"cd {file_dir} && python3 {filename}"
-        exit_code, output = container.exec_run(
-            cmd,
-            workdir=file_dir,  # Set working directory
-            tty=True
-        )
-        
-        return {
-            "exit_code": exit_code,
-            "output": output.decode('utf-8') if output else ""
-        }
-        
-    except KeyError:
-        raise HTTPException(status_code=404, detail="User container not found")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))

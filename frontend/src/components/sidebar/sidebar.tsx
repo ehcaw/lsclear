@@ -109,7 +109,7 @@ export function Sidebar({ userId, onSelectChange, className }: SidebarProps) {
             <Code className="h-5 w-5" />
           </div>
           <div>
-            <h2 className="text-lg font-bold text-gray-900 dark:text-white">LSClear</h2>
+            <h2 className="text-lg font-bold text-gray-900 dark:text-white">lsclear</h2>
             <p className="text-xs text-gray-500 dark:text-gray-400">Code Explorer</p>
           </div>
         </div>
