@@ -606,11 +606,6 @@ async def update_file(file_id: str, update: FileUpdate):
         container.put_archive(path='/workspace', data=pw_tarstream)
 
         return {"status": "success", "message": "File updated successfully"}
-
-    except docker.errors.NotFound:
-        if update.userId in user_containers:
-            del user_containers[update.userId]
-        raise HTTPException(status_code=404, detail="Container not found")
     except Exception as e:
         print(f"Error updating file: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -632,7 +627,7 @@ async def terminal_status(sid: str):
             return {"status": "FAILED"}
         else:
             return {"status": "PENDING"}
-    except docker.errors.NotFound:
+    except Exception as e:
         return {"status": "FAILED"}
 
 @app.delete("/terminal/{sid}")
@@ -648,10 +643,6 @@ async def terminal_stop(sid: str):
         container = client.containers.get(container_id)
         container.stop()
         container.remove()
-        del session_containers[sid]
-        return {"ok": True}
-    except docker.errors.NotFound:
-        # Container already gone
         del session_containers[sid]
         return {"ok": True}
     except Exception as e:
@@ -678,7 +669,7 @@ async def cleanup_user_container(user_id: str):
                                    if v.get('user_id') != user_id}
                 del user_containers[user_id]
                 return {"status": "success", "message": f"Container {container_id} removed"}
-            except docker.errors.NotFound:
+            except Exception as e:
                 # Container already removed
                 if user_id in user_containers:
                     del user_containers[user_id]
