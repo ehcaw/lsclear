@@ -74,7 +74,9 @@ const TerminalIframe: React.FC<TerminalIframeProps> = ({
         // Add event listeners for debugging
         ws.current!.onopen = () => {
           setStatus("Connected");
-          terminal.current!.focus();
+          if (terminal.current) {
+            terminal.current.focus();
+          }
         
           // tell the backend our size…
           const dimensions = fitAddon.current!.proposeDimensions() || { rows: 24, cols: 80 };
@@ -83,6 +85,7 @@ const TerminalIframe: React.FC<TerminalIframeProps> = ({
           ws.current!.send(JSON.stringify({ type: "resize", rows, cols }));
         
           // hook up xterm ↔ websocket (this wires both onData and onmessage)
+          if (terminal.current) {
           terminal.current!.loadAddon(new AttachAddon(ws.current!));
         };
 
