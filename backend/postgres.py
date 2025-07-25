@@ -8,6 +8,10 @@ load_dotenv()
 
 class NeonDB:
     def __init__(self): 
+        self.conn = None
+        self.connect()
+
+    def connect(self):
         self.conn = psycopg2.connect(
             host=os.getenv("PGHOST"),
             port=os.getenv("PGPORT"),

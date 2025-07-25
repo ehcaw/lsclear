@@ -139,7 +139,7 @@ def get_or_create_container(user_id: str):
             return container
     except Exception as e:
         print(f"Error finding existing container: {e}")
-        if 'containers' in locals() and containers:
+        if 'containers' in locals() and containers is not None:
             try:
                 containers[0].remove(force=True)
             except:
@@ -183,11 +183,11 @@ def get_or_create_container(user_id: str):
                         print(f"Container {container.id} is now running and responsive")
                         break
                     else:
-                        print(f"Container {container.id} is running but not responsive (attempt {attempt + 1}/{max_attempts})")
+                        print(f"Container {container.id} is running but not responsive (attempt {attempt + 1}))")
                 except Exception as e:
                     print(f"Error checking container responsiveness: {e}")
             else:
-                print(f"Container {container.id} status: {container.status} (attempt {attempt + 1}/{max_attempts})")
+                print(f"Container {container.id} status: {container.status} (attempt {attempt + 1})")
         if container.status != 'running':
             raise Exception(f"Container failed to start. Status: {container.status}")
 
@@ -543,6 +543,8 @@ async def update_file(file_id: str, update: FileUpdate):
     """
     try:
         print(update)
+        if neon_db.conn is None or neon_db.conn.closed != 0: 
+            neon_db.connect()
         with neon_db.conn.cursor() as cursor:
             # Get the full path of the file by recursively traversing its parents
             cursor.execute("""

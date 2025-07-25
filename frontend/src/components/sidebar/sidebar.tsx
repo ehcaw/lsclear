@@ -2,7 +2,7 @@ import useSWR from 'swr';
 import useSWRSubscription from "swr/subscription";
 import { useEffect } from 'react';
 import { ProjectStructure } from "./project-structure";
-import { FolderTree, Code } from 'lucide-react';
+import { FolderTree, Code, RefreshCw } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import useFileStore  from "@/lib/files-store";
 
@@ -45,11 +45,7 @@ export function Sidebar({ userId, onSelectChange, className }: SidebarProps) {
     (key, { next }) => {
       if (!userId) return () => {};
 
-      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsBaseUrl = process.env.NODE_ENV === 'production' 
-        ? 'wss://api.documix.xyz'  // Replace with your actual WebSocket subdomain
-        : `${wsProtocol}//${window.location.hostname}:8000`;
-      
+      const wsBaseUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000';
       const ws = new WebSocket(`${wsBaseUrl}${key}`);
 
       ws.onmessage = (event) => {
@@ -125,8 +121,17 @@ export function Sidebar({ userId, onSelectChange, className }: SidebarProps) {
       
       {/* Project Structure */}
       <div className="flex-1 overflow-y-auto py-3 px-2">
+        <div className="flex items-center justify-between">
         <div className="mb-2 px-3 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
           Project Files
+        </div>
+        <button 
+          onClick={() => mutate()} 
+          className="p-1 rounded-md hover:bg-gray-700 transition-colors"
+          aria-label="Refresh file list"
+        >
+          <RefreshCw size={16} />
+        </button>
         </div>
         <ProjectStructure data={projectData} onSelectChange={onSelectChange} />
       </div>
